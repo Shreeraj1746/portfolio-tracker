@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{{ page_title or "Portfolio Tracker" }}</title>
+  <link rel="stylesheet" href="{{ request.url_for('static', path='main.css') }}" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" defer></script>
+  <script src="{{ request.url_for('static', path='main.js') }}" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><a href="/">Portfolio Tracker</a></div>
+    {% if user %}
+    <nav class="nav">
+      <a href="/">Dashboard</a>
+      <a href="/baskets">Baskets</a>
+      <form method="post" action="/logout" class="inline-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+        <button type="submit" class="button-link">Logout</button>
+      </form>
+    </nav>
+    {% endif %}
+  </header>
+
+  <main class="container">
+    {% if flashes %}
+      <section class="flash-stack">
+        {% for flash in flashes %}
+          <div class="flash flash-{{ flash.category }}">{{ flash.message }}</div>
+        {% endfor %}
+      </section>
+    {% endif %}
+    {% block content %}{% endblock %}
+  </main>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

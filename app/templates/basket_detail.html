@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="panel">
+  <h1>{{ basket.name }}</h1>
+  <p><a href="/baskets">Back to baskets</a></p>
+  <h2>Members</h2>
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Symbol</th>
+        <th>Name</th>
+        <th>Weight</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for link in basket.assets %}
+      <tr>
+        <td>{{ link.asset.symbol }}</td>
+        <td>{{ link.asset.name }}</td>
+        <td>{{ link.weight|number(4) if link.weight is not none else "Equal" }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="panel">
+  <h2>Normalized Performance (Base = 100)</h2>
+  {% if has_series %}
+    <div class="chart-wrap">
+      <canvas id="basketChart"></canvas>
+    </div>
+  {% else %}
+    <p class="muted">Not enough historical quote data to build this chart.</p>
+  {% endif %}
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  window.BASKET_CHART = {
+    labels: {{ series_labels_json|safe }},
+    values: {{ series_values_json|safe }}
+  };
+</script>
+{% endblock %}

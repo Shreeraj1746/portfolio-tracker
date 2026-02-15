@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="grid two-col">
+  <div class="panel">
+    <h2>Add Group</h2>
+    <form method="post" action="/groups" class="form-grid compact">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+      <label>
+        Group name
+        <input type="text" name="name" required placeholder="stonks" />
+      </label>
+      <button type="submit">Create Group</button>
+    </form>
+
+    <h2>Add Asset</h2>
+    <form method="post" action="/assets" class="form-grid compact">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+      <label>
+        Symbol
+        <input type="text" name="symbol" required placeholder="AAPL / BTC-USD / HOUSE" />
+      </label>
+      <label>
+        Name
+        <input type="text" name="name" required placeholder="Apple Inc." />
+      </label>
+      <label>
+        Type
+        <select name="asset_type">
+          <option value="market">Market</option>
+          <option value="manual">Manual</option>
+        </select>
+      </label>
+      <label>
+        Group
+        <select name="group_id" required>
+          <option value="">Select group</option>
+          {% for group in groups %}
+            <option value="{{ group.id }}">{{ group.name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <button type="submit">Create Asset</button>
+    </form>
+  </div>
+
+  <div class="panel">
+    <h2>Allocation By Group</h2>
+    <div class="chart-wrap small">
+      <canvas id="allocationChart"></canvas>
+    </div>
+  </div>
+</section>
+
+<section class="panel">
+  <h2>Positions</h2>
+  <table class="data-table" id="positionsTable">
+    <thead>
+      <tr>
+        <th>Symbol / Name</th>
+        <th>Group</th>
+        <th>Quantity</th>
+        <th>Avg Cost</th>
+        <th>Current Price</th>
+        <th>As Of</th>
+        <th>Current Value</th>
+        <th>Unrealized PnL</th>
+        <th>Allocation %</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for group_name, rows in grouped_positions.items() %}
+        {% for row in rows %}
+          <tr
+            class="asset-row"
+            data-asset-id="{{ row.asset_id }}"
+            data-symbol="{{ row.symbol }}"
+            data-group="{{ row.group_name }}"
+            data-asset-type="{{ row.asset_type.value }}"
+            data-quantity="{{ row.quantity if row.quantity is not none else '' }}"
+            data-avg-cost="{{ row.avg_cost if row.avg_cost is not none else '' }}"
+          >
+            <td><a href="/assets/{{ row.asset_id }}">{{ row.symbol }}</a> <span class="muted">{{ row.name }}</span></td>
+            <td>{{ row.group_name }}</td>
+            <td class="quantity-cell">{{ row.quantity|number(6) if row.quantity is not none else "-" }}</td>
+            <td class="avg-cost-cell">{{ row.avg_cost|currency if row.avg_cost is not none else "-" }}</td>
+            <td class="current-price">{{ row.current_price|currency if row.current_price is not none else "-" }}</td>
+            <td class="as-of">{{ row.as_of|dt if row.as_of else "-" }}</td>
+            <td class="current-value">{{ row.current_value|currency }}</td>
+            <td class="pnl {{ 'positive' if (row.unrealized_pnl or 0) >= 0 else 'negative' }}">
+              {{ row.unrealized_pnl|currency if row.unrealized_pnl is not none else "-" }}
+            </td>
+            <td class="allocation">{{ row.allocation_pct|pct }}</td>
+          </tr>
+        {% endfor %}
+        <tr class="group-subtotal" data-group-subtotal="{{ group_name }}">
+          <td colspan="6"><strong>{{ group_name }} subtotal</strong></td>
+          <td class="group-value">{{ group_totals[group_name]["value"]|currency }}</td>
+          <td class="group-pnl {{ 'positive' if group_totals[group_name]['pnl'] >= 0 else 'negative' }}">{{ group_totals[group_name]["pnl"]|currency }}</td>
+          <td></td>
+        </tr>
+      {% endfor %}
+    </tbody>
+    <tfoot>
+      <tr class="grand-total">
+        <td colspan="6"><strong>Grand Total</strong></td>
+        <td id="grandTotalValue">{{ total_value|currency }}</td>
+        <td id="grandTotalPnl" class="{{ 'positive' if total_unrealized_pnl >= 0 else 'negative' }}">{{ total_unrealized_pnl|currency }}</td>
+        <td></td>
+      </tr>
+    </tfoot>
+  </table>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  window.PORTFOLIO_DASHBOARD = {
+    symbols: {{ market_symbols|tojson }},
+    allocationLabels: {{ allocation_labels|tojson }},
+    allocationValues: {{ allocation_values|tojson }}
+  };
+</script>
+{% endblock %}

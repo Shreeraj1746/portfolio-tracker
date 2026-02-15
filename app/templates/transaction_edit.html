@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="panel">
+  <h1>Edit Transaction for {{ asset.symbol }}</h1>
+  <form method="post" action="/assets/{{ asset.id }}/transactions/{{ transaction.id }}/edit" class="form-grid" id="transactionForm">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <label>
+      Type
+      <select name="type" id="txType" required>
+        {% for tx_type in tx_types %}
+          <option value="{{ tx_type }}" {% if transaction.type.value == tx_type %}selected{% endif %}>{{ tx_type }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>
+      Timestamp
+      <input type="datetime-local" name="timestamp" value="{{ transaction.timestamp.strftime('%Y-%m-%dT%H:%M') }}" required />
+    </label>
+    <label data-field="quantity">
+      Quantity
+      <input type="number" step="0.000001" name="quantity" value="{{ transaction.quantity if transaction.quantity is not none else '' }}" />
+    </label>
+    <label data-field="price">
+      Price
+      <input type="number" step="0.0001" name="price" value="{{ transaction.price if transaction.price is not none else '' }}" />
+    </label>
+    <label>
+      Fees
+      <input type="number" step="0.0001" name="fees" value="{{ transaction.fees }}" />
+    </label>
+    <label data-field="manual_value">
+      Manual value
+      <input type="number" step="0.01" name="manual_value" value="{{ transaction.manual_value if transaction.manual_value is not none else '' }}" />
+    </label>
+    <label class="full-width">
+      Note
+      <input type="text" name="note" value="{{ transaction.note or '' }}" />
+    </label>
+    <div class="actions-row">
+      <button type="submit">Save</button>
+      <a href="/assets/{{ asset.id }}">Cancel</a>
+    </div>
+  </form>
+</section>
+{% endblock %}

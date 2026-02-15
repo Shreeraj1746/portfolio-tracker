@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="grid two-col">
+  <div class="panel">
+    <h1>Baskets</h1>
+    <form method="post" action="/baskets/create" class="form-grid">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+      <label>
+        Basket name
+        <input type="text" name="name" required placeholder="My momentum basket" />
+      </label>
+
+      <div class="checkbox-list">
+        <strong>Select assets (optional weights)</strong>
+        {% for asset in assets %}
+          <label class="asset-pick">
+            <span>
+              <input type="checkbox" name="asset_ids" value="{{ asset.id }}" />
+              {{ asset.symbol }} <span class="muted">{{ asset.name }}</span>
+            </span>
+            <input type="number" step="0.01" min="0" name="weight_{{ asset.id }}" placeholder="weight" />
+          </label>
+        {% endfor %}
+      </div>
+      <button type="submit">Create Basket</button>
+    </form>
+  </div>
+
+  <div class="panel">
+    <h2>Existing Baskets</h2>
+    <ul class="link-list">
+      {% for basket in baskets %}
+        <li><a href="/baskets/{{ basket.id }}">{{ basket.name }}</a></li>
+      {% else %}
+        <li class="muted">No baskets yet.</li>
+      {% endfor %}
+    </ul>
+  </div>
+</section>
+{% endblock %}
