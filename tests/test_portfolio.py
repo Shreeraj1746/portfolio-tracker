@@ -10,10 +10,17 @@ from app.services.portfolio import (
     InvalidTransaction,
     compute_allocation_percentages,
     compute_market_position,
+    sort_transactions,
 )
 
 
-def make_tx(tx_id: int, tx_type: TransactionType, quantity: float, price: float, fees: float = 0.0):
+def make_tx(
+    tx_id: int,
+    tx_type: TransactionType,
+    quantity: float,
+    price: float,
+    fees: float = 0.0,
+):
     return SimpleNamespace(
         id=tx_id,
         type=tx_type,
@@ -70,5 +77,19 @@ def test_sell_more_than_owned_is_rejected() -> None:
 
 
 def test_allocations_sum_to_100_percent() -> None:
-    allocation = compute_allocation_percentages({"asset1": 150.0, "asset2": 50.0, "asset3": 300.0})
+    allocation = compute_allocation_percentages(
+        {"asset1": 150.0, "asset2": 50.0, "asset3": 300.0}
+    )
     assert sum(allocation.values()) == pytest.approx(100.0)
+
+
+def test_sort_transactions_handles_naive_and_aware_datetimes() -> None:
+    txs = [
+        SimpleNamespace(id=1, timestamp=datetime(2026, 2, 15, 13, 15, 0)),
+        SimpleNamespace(
+            id=2, timestamp=datetime(2026, 2, 15, 13, 14, 0, tzinfo=timezone.utc)
+        ),
+    ]
+
+    ordered = sort_transactions(txs)
+    assert [tx.id for tx in ordered] == [2, 1]

@@ -2,8 +2,18 @@
 
 {% block content %}
 <section class="panel">
-  <h1>{{ basket.name }}</h1>
+  <div class="title-row">
+    <h1>{{ basket.name }}</h1>
+    <div class="actions-row">
+      <a href="/baskets/{{ basket.id }}/edit">Edit Basket</a>
+      <form method="post" action="/baskets/{{ basket.id }}/delete" class="inline-form" onsubmit="return confirm('Delete this basket?');">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+        <button type="submit" class="button-link">Delete</button>
+      </form>
+    </div>
+  </div>
   <p><a href="/baskets">Back to baskets</a></p>
+
   <h2>Members</h2>
   <table class="data-table">
     <thead>
@@ -20,6 +30,8 @@
         <td>{{ link.asset.name }}</td>
         <td>{{ link.weight|number(4) if link.weight is not none else "Equal" }}</td>
       </tr>
+      {% else %}
+      <tr><td colspan="3" class="muted">No members selected.</td></tr>
       {% endfor %}
     </tbody>
   </table>
@@ -27,12 +39,33 @@
 
 <section class="panel">
   <h2>Normalized Performance (Base = 100)</h2>
+
+  <form method="get" action="/baskets/{{ basket.id }}" class="form-grid compact inline-range-form">
+    <label>
+      Start date
+      <input type="date" name="start" value="{{ start_date }}" />
+    </label>
+    <label>
+      End date
+      <input type="date" name="end" value="{{ end_date }}" />
+    </label>
+    <button type="submit">Apply Range</button>
+  </form>
+
+  {% if missing_symbols %}
+    <p class="muted">Missing data symbols: {{ missing_symbols|join(', ') }}</p>
+  {% endif %}
+
+  {% if series_error %}
+    <p class="muted">{{ series_error }}</p>
+  {% endif %}
+
   {% if has_series %}
     <div class="chart-wrap">
       <canvas id="basketChart"></canvas>
     </div>
   {% else %}
-    <p class="muted">Not enough historical quote data to build this chart.</p>
+    <p class="muted">No chart available for the selected range.</p>
   {% endif %}
 </section>
 {% endblock %}

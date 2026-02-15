@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="panel">
+  <h1>Edit Basket: {{ basket.name }}</h1>
+
+  <form method="post" action="/baskets/{{ basket.id }}/edit" class="form-grid">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+
+    <label class="full-width">
+      Basket name
+      <input type="text" name="name" value="{{ basket.name }}" required />
+    </label>
+
+    <div class="checkbox-list full-width">
+      <strong>Members and weights</strong>
+      {% for asset in assets %}
+        {% set checked = asset.id in selected %}
+        <label class="asset-pick">
+          <span>
+            <input type="checkbox" name="asset_ids" value="{{ asset.id }}" {% if checked %}checked{% endif %} />
+            {{ asset.symbol }} <span class="muted">{{ asset.name }}</span>
+          </span>
+          <input
+            type="number"
+            step="any"
+            min="0"
+            name="weight_{{ asset.id }}"
+            value="{{ selected.get(asset.id, '') if selected.get(asset.id) is not none else '' }}"
+            placeholder="weight"
+          />
+        </label>
+      {% else %}
+        <p class="muted">No active market assets available.</p>
+      {% endfor %}
+    </div>
+
+    <div class="actions-row full-width">
+      <button type="submit">Save Basket</button>
+      <a href="/baskets/{{ basket.id }}">Cancel</a>
+    </div>
+  </form>
+
+  <div class="divider"></div>
+
+  <form method="post" action="/baskets/{{ basket.id }}/delete" onsubmit="return confirm('Delete this basket?');">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <button type="submit" class="button-danger">Delete Basket</button>
+  </form>
+</section>
+{% endblock %}

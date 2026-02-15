@@ -28,11 +28,11 @@ class HistoricalPoint:
 class QuoteProvider(Protocol):
     """Provider interface for live and historical quotes."""
 
-    def get_latest_quote(self, symbol: str) -> QuoteResult:
-        ...
+    def get_latest_quote(self, symbol: str) -> QuoteResult: ...
 
-    def get_historical_daily(self, symbol: str, start: date, end: date) -> list[HistoricalPoint]:
-        ...
+    def get_historical_daily(
+        self, symbol: str, start: date, end: date
+    ) -> list[HistoricalPoint]: ...
 
 
 class YFinanceProvider:
@@ -56,9 +56,13 @@ class YFinanceProvider:
             raise RuntimeError(f"No close data found for {symbol}")
 
         price = float(close_series.iloc[-1])
-        return QuoteResult(symbol=symbol.upper(), price=price, fetched_at=datetime.now(timezone.utc))
+        return QuoteResult(
+            symbol=symbol.upper(), price=price, fetched_at=datetime.now(timezone.utc)
+        )
 
-    def get_historical_daily(self, symbol: str, start: date, end: date) -> list[HistoricalPoint]:
+    def get_historical_daily(
+        self, symbol: str, start: date, end: date
+    ) -> list[HistoricalPoint]:
         ticker = self._yf.Ticker(symbol)
         # yfinance end date is exclusive, so shift by one day.
         hist = ticker.history(
@@ -81,12 +85,31 @@ class YFinanceProvider:
 class PricingService:
     """Handles quote lookups with SQLite-backed cache and provider fallback."""
 
+    _CRYPTO_USD_ALIASES = {
+        "ADA",
+        "AVAX",
+        "BCH",
+        "BNB",
+        "BTC",
+        "DOGE",
+        "DOT",
+        "ETH",
+        "LINK",
+        "LTC",
+        "MATIC",
+        "SHIB",
+        "SOL",
+        "TRX",
+        "XRP",
+    }
+
     def __init__(self, provider: QuoteProvider, ttl_seconds: int = 60) -> None:
         self.provider = provider
         self.ttl_seconds = ttl_seconds
 
     def get_quote(self, db: Session, symbol: str) -> QuoteResult | None:
         clean_symbol = symbol.strip().upper()
+        provider_symbol = self._provider_symbol(clean_symbol)
         now = datetime.now(timezone.utc)
 
         cached = db.scalar(select(QuoteCache).where(QuoteCache.symbol == clean_symbol))
@@ -100,15 +123,23 @@ class PricingService:
                 )
 
         try:
-            fresh = self.provider.get_latest_quote(clean_symbol)
+            fresh = self.provider.get_latest_quote(provider_symbol)
             if cached is None:
-                cached = QuoteCache(symbol=clean_symbol, price=fresh.price, fetched_at=self._as_utc(fresh.fetched_at))
+                cached = QuoteCache(
+                    symbol=clean_symbol,
+                    price=fresh.price,
+                    fetched_at=self._as_utc(fresh.fetched_at),
+                )
                 db.add(cached)
             else:
                 cached.price = fresh.price
                 cached.fetched_at = self._as_utc(fresh.fetched_at)
             db.flush()
-            return QuoteResult(symbol=clean_symbol, price=fresh.price, fetched_at=self._as_utc(fresh.fetched_at))
+            return QuoteResult(
+                symbol=clean_symbol,
+                price=fresh.price,
+                fetched_at=self._as_utc(fresh.fetched_at),
+            )
         except Exception as exc:
             if cached is not None:
                 return QuoteResult(
@@ -120,9 +151,13 @@ class PricingService:
                 )
             return None
 
-    def get_historical_daily(self, symbol: str, start: date, end: date) -> list[HistoricalPoint]:
+    def get_historical_daily(
+        self, symbol: str, start: date, end: date
+    ) -> list[HistoricalPoint]:
         try:
-            return self.provider.get_historical_daily(symbol.strip().upper(), start, end)
+            return self.provider.get_historical_daily(
+                self._provider_symbol(symbol.strip().upper()), start, end
+            )
         except Exception:
             return []
 
@@ -131,3 +166,10 @@ class PricingService:
         if value.tzinfo is None:
             return value.replace(tzinfo=timezone.utc)
         return value.astimezone(timezone.utc)
+
+    @classmethod
+    def _provider_symbol(cls, symbol: str) -> str:
+        """Map user-friendly symbols to provider-specific tickers."""
+        if symbol in cls._CRYPTO_USD_ALIASES:
+            return f"{symbol}-USD"
+        return symbol

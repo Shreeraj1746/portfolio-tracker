@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="panel">
+  <h1>Edit Asset: {{ asset.symbol }}</h1>
+
+  {% if has_transactions %}
+    <p class="muted">This asset has {{ tx_count }} transaction(s). Symbol and type cannot be changed.</p>
+  {% endif %}
+
+  <form method="post" action="/assets/{{ asset.id }}/edit" class="form-grid">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+
+    <label>
+      Name
+      <input type="text" name="name" required value="{{ asset.name }}" />
+    </label>
+
+    <label>
+      Symbol
+      <input type="text" name="symbol" required value="{{ asset.symbol }}" {% if has_transactions %}disabled{% endif %} />
+      {% if has_transactions %}<span class="muted">Locked once transactions exist.</span>{% endif %}
+    </label>
+
+    <label>
+      Type
+      <select name="asset_type" {% if has_transactions %}disabled{% endif %}>
+        {% for type_value in asset_types %}
+          <option value="{{ type_value }}" {% if asset.asset_type.value == type_value %}selected{% endif %}>{{ type_value }}</option>
+        {% endfor %}
+      </select>
+      {% if has_transactions %}<span class="muted">Locked once transactions exist.</span>{% endif %}
+    </label>
+
+    <label>
+      Group
+      <select name="group_id" required>
+        {% for group in groups %}
+          <option value="{{ group.id }}" {% if group.id == asset.group_id %}selected{% endif %}>{{ group.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+
+    <label class="checkbox-inline">
+      <input type="checkbox" name="is_archived" {% if asset.is_archived %}checked{% endif %} />
+      Archived (hide from dashboard and basket pickers)
+    </label>
+
+    <div class="actions-row full-width">
+      <button type="submit">Save Asset</button>
+      <a href="/assets/{{ asset.id }}">Cancel</a>
+    </div>
+  </form>
+
+  <div class="divider"></div>
+
+  {% if not has_transactions %}
+    <form method="post" action="/assets/{{ asset.id }}/delete" onsubmit="return confirm('Delete this asset permanently?');">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+      <button type="submit" class="button-danger">Delete Asset</button>
+    </form>
+  {% else %}
+    <form method="post" action="/assets/{{ asset.id }}/archive" onsubmit="return confirm('Archive this asset?');">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+      <button type="submit">Archive Asset</button>
+    </form>
+  {% endif %}
+</section>
+{% endblock %}

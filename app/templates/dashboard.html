@@ -14,7 +14,7 @@
     </form>
 
     <h2>Add Asset</h2>
-    <form method="post" action="/assets" class="form-grid compact">
+    <form method="post" action="/assets" class="form-grid compact" id="assetCreateForm">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
       <label>
         Symbol
@@ -26,7 +26,7 @@
       </label>
       <label>
         Type
-        <select name="asset_type">
+        <select name="asset_type" id="assetTypeSelect">
           <option value="market">Market</option>
           <option value="manual">Manual</option>
         </select>
@@ -40,14 +40,55 @@
           {% endfor %}
         </select>
       </label>
+
+      <p class="hint" data-asset-type-note="market">
+        Market: Price auto-fetched, value = shares x price.
+      </p>
+      <p class="hint hidden" data-asset-type-note="manual">
+        Manual: Value set manually (real estate, private), no live price.
+      </p>
+
+      <label data-asset-create-field="market">
+        Initial shares (optional)
+        <input type="number" step="0.000001" min="0" name="initial_quantity" placeholder="0" />
+      </label>
+      <label data-asset-create-field="market">
+        Initial buy price/share (USD)
+        <input type="number" step="0.0001" min="0" name="initial_buy_price" placeholder="0" />
+      </label>
+      <label data-asset-create-field="market">
+        Initial fees (optional)
+        <input type="number" step="0.01" min="0" name="initial_fees" placeholder="0" />
+      </label>
+
+      <label class="hidden" data-asset-create-field="manual">
+        Initial current value (USD)
+        <input type="number" step="0.01" min="0" name="initial_value" placeholder="10000" />
+      </label>
+      <label class="hidden" data-asset-create-field="manual">
+        Initial invested / cost basis (optional USD)
+        <input type="number" step="0.01" min="0" name="initial_invested" placeholder="7500" />
+      </label>
+
       <button type="submit">Create Asset</button>
     </form>
   </div>
 
   <div class="panel">
     <h2>Allocation By Group</h2>
+    <p id="allocationByGroupEmpty" class="muted {% if has_group_allocation %}hidden{% endif %}">
+      No holdings to chart yet.
+    </p>
     <div class="chart-wrap small">
-      <canvas id="allocationChart"></canvas>
+      <canvas id="allocationByGroupChart" {% if not has_group_allocation %}class="hidden"{% endif %}></canvas>
+    </div>
+
+    <h2>Allocation By Asset</h2>
+    <p id="allocationByAssetEmpty" class="muted {% if has_asset_allocation %}hidden{% endif %}">
+      No holdings to chart yet.
+    </p>
+    <div class="chart-wrap small">
+      <canvas id="allocationByAssetChart" {% if not has_asset_allocation %}class="hidden"{% endif %}></canvas>
     </div>
   </div>
 </section>
@@ -77,14 +118,25 @@
             data-symbol="{{ row.symbol }}"
             data-group="{{ row.group_name }}"
             data-asset-type="{{ row.asset_type.value }}"
+            data-row-kind="{{ row.row_kind }}"
             data-quantity="{{ row.quantity if row.quantity is not none else '' }}"
             data-avg-cost="{{ row.avg_cost if row.avg_cost is not none else '' }}"
+            data-current-value="{{ row.current_value }}"
+            data-current-pnl="{{ row.unrealized_pnl if row.unrealized_pnl is not none else '' }}"
+            data-in-basket-member="{{ 1 if row.in_basket_member else 0 }}"
+            data-chart-label="{{ row.name if row.row_kind == 'basket' else row.symbol }}"
           >
-            <td><a href="/assets/{{ row.asset_id }}">{{ row.symbol }}</a> <span class="muted">{{ row.name }}</span></td>
+            <td>
+              <a href="{{ row.detail_path }}">{{ row.symbol }}</a>
+              <span class="muted">{{ row.name }}</span>
+              {% if row.row_kind == "asset" %}
+                <a class="tiny-link" href="/assets/{{ row.asset_id }}/edit">Edit</a>
+              {% endif %}
+            </td>
             <td>{{ row.group_name }}</td>
             <td class="quantity-cell">{{ row.quantity|number(6) if row.quantity is not none else "-" }}</td>
             <td class="avg-cost-cell">{{ row.avg_cost|currency if row.avg_cost is not none else "-" }}</td>
-            <td class="current-price">{{ row.current_price|currency if row.current_price is not none else "-" }}</td>
+            <td class="current-price {{ 'stale' if row.quote_stale else '' }}">{{ row.current_price|currency if row.current_price is not none else "-" }}</td>
             <td class="as-of">{{ row.as_of|dt if row.as_of else "-" }}</td>
             <td class="current-value">{{ row.current_value|currency }}</td>
             <td class="pnl {{ 'positive' if (row.unrealized_pnl or 0) >= 0 else 'negative' }}">
@@ -117,8 +169,12 @@
 <script>
   window.PORTFOLIO_DASHBOARD = {
     symbols: {{ market_symbols|tojson }},
-    allocationLabels: {{ allocation_labels|tojson }},
-    allocationValues: {{ allocation_values|tojson }}
+    groupAllocationLabels: {{ group_allocation_labels|tojson }},
+    groupAllocationValues: {{ group_allocation_values|tojson }},
+    groupAllocationPercentages: {{ group_allocation_percentages|tojson }},
+    assetAllocationLabels: {{ asset_allocation_labels|tojson }},
+    assetAllocationValues: {{ asset_allocation_values|tojson }},
+    assetAllocationPercentages: {{ asset_allocation_percentages|tojson }}
   };
 </script>
 {% endblock %}

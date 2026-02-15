@@ -52,7 +52,10 @@ def _dt(value: Any) -> str:
     return str(value)
 
 
-def create_app() -> FastAPI:
+def create_app(
+    pricing_service: PricingService | None = None,
+    enable_startup_init: bool = True,
+) -> FastAPI:
     """Create and configure the FastAPI application."""
     app = FastAPI(title=settings.app_name)
 
@@ -74,11 +77,16 @@ def create_app() -> FastAPI:
 
     app.state.templates = templates
 
-    try:
-        provider: QuoteProvider = YFinanceProvider()
-    except Exception:
-        provider = _UnavailableProvider()  # type: ignore[assignment]
-    app.state.pricing_service = PricingService(provider=provider, ttl_seconds=settings.quote_ttl_seconds)
+    if pricing_service is None:
+        try:
+            provider: QuoteProvider = YFinanceProvider()
+        except Exception:
+            provider = _UnavailableProvider()  # type: ignore[assignment]
+        pricing_service = PricingService(
+            provider=provider,
+            ttl_seconds=settings.quote_ttl_seconds,
+        )
+    app.state.pricing_service = pricing_service
 
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
@@ -89,6 +97,8 @@ def create_app() -> FastAPI:
 
     @app.on_event("startup")
     def startup() -> None:
+        if not enable_startup_init:
+            return
         init_db()
         with SessionLocal() as db:
             ensure_default_portfolio(db)

@@ -3,24 +3,26 @@
 {% block content %}
 <section class="grid two-col">
   <div class="panel">
-    <h1>Baskets</h1>
+    <h1>Create Basket</h1>
     <form method="post" action="/baskets/create" class="form-grid">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
-      <label>
+      <label class="full-width">
         Basket name
         <input type="text" name="name" required placeholder="My momentum basket" />
       </label>
 
-      <div class="checkbox-list">
-        <strong>Select assets (optional weights)</strong>
+      <div class="checkbox-list full-width">
+        <strong>Select market assets (optional weights)</strong>
         {% for asset in assets %}
           <label class="asset-pick">
             <span>
               <input type="checkbox" name="asset_ids" value="{{ asset.id }}" />
               {{ asset.symbol }} <span class="muted">{{ asset.name }}</span>
             </span>
-            <input type="number" step="0.01" min="0" name="weight_{{ asset.id }}" placeholder="weight" />
+            <input type="number" step="any" min="0" name="weight_{{ asset.id }}" placeholder="weight" />
           </label>
+        {% else %}
+          <p class="muted">No active market assets are available for baskets.</p>
         {% endfor %}
       </div>
       <button type="submit">Create Basket</button>
@@ -29,13 +31,33 @@
 
   <div class="panel">
     <h2>Existing Baskets</h2>
-    <ul class="link-list">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Members</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
       {% for basket in baskets %}
-        <li><a href="/baskets/{{ basket.id }}">{{ basket.name }}</a></li>
+        <tr>
+          <td>{{ basket.name }}</td>
+          <td>{{ basket.assets|length if basket.assets is defined else '-' }}</td>
+          <td class="actions">
+            <a href="/baskets/{{ basket.id }}">View</a>
+            <a href="/baskets/{{ basket.id }}/edit">Edit</a>
+            <form method="post" action="/baskets/{{ basket.id }}/delete" class="inline-form" onsubmit="return confirm('Delete this basket?');">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+              <button type="submit" class="button-link">Delete</button>
+            </form>
+          </td>
+        </tr>
       {% else %}
-        <li class="muted">No baskets yet.</li>
+        <tr><td colspan="3" class="muted">No baskets yet.</td></tr>
       {% endfor %}
-    </ul>
+      </tbody>
+    </table>
   </div>
 </section>
 {% endblock %}

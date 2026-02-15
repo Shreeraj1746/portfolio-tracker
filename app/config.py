@@ -13,7 +13,9 @@ class Settings:
     database_url: str = os.getenv("DATABASE_URL", "sqlite:///./portfolio.db")
     quote_ttl_seconds: int = int(os.getenv("QUOTE_TTL_SECONDS", "60"))
     session_cookie_name: str = os.getenv("SESSION_COOKIE_NAME", "portfolio_session")
-    session_https_only: bool = os.getenv("SESSION_HTTPS_ONLY", "false").lower() == "true"
+    session_https_only: bool = (
+        os.getenv("SESSION_HTTPS_ONLY", "false").lower() == "true"
+    )
 
 
 settings = Settings()

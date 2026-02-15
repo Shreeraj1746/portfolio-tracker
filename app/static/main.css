@@ -51,7 +51,7 @@ a:hover {
 }
 
 .container {
-  max-width: 1400px;
+  max-width: 1480px;
   margin: 20px auto;
   padding: 0 20px 20px;
 }
@@ -77,7 +77,7 @@ a:hover {
 
 .form-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(200px, 1fr));
+  grid-template-columns: repeat(2, minmax(220px, 1fr));
   gap: 12px;
 }
 
@@ -120,6 +120,16 @@ button:hover {
   background: none;
   color: var(--accent);
   padding: 0;
+}
+
+.button-danger {
+  background: #f9e6e6;
+  border-color: #e6b8b8;
+  color: #7a2020;
+}
+
+.button-danger:hover {
+  background: #f2d4d4;
 }
 
 .inline-form {
@@ -188,7 +198,7 @@ button:hover {
 }
 
 .chart-wrap {
-  height: 320px;
+  height: 340px;
 }
 
 .chart-wrap.small {
@@ -210,7 +220,7 @@ button:hover {
 
 .actions {
   display: flex;
-  gap: 8px;
+  gap: 10px;
   align-items: center;
 }
 
@@ -218,6 +228,13 @@ button:hover {
   display: flex;
   gap: 12px;
   align-items: center;
+}
+
+.title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 .checkbox-list {
@@ -232,10 +249,53 @@ button:hover {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  grid-template-columns: 1fr auto;
+  gap: 8px;
+}
+
+.asset-pick input[type="number"] {
+  width: 130px;
 }
 
 .link-list {
   margin: 0;
   padding-left: 18px;
+}
+
+.tiny-link {
+  margin-left: 10px;
+  font-size: 0.8rem;
+}
+
+.hint {
+  margin: 2px 0 2px;
+  color: #4a5d6d;
+  font-size: 0.88rem;
+}
+
+.hidden {
+  display: none !important;
+}
+
+.stale {
+  color: #8c6d1f;
+}
+
+.danger {
+  color: #b53333;
+}
+
+.divider {
+  border-top: 1px solid var(--line);
+  margin: 16px 0;
+}
+
+.checkbox-inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.inline-range-form {
+  grid-template-columns: repeat(3, minmax(180px, auto));
+  align-items: end;
 }

@@ -28,7 +28,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Portfolio Tracker CLI")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    create_user_cmd = subparsers.add_parser("create-user", help="Create an initial login user")
+    create_user_cmd = subparsers.add_parser(
+        "create-user", help="Create an initial login user"
+    )
     create_user_cmd.add_argument("--username", required=True)
     create_user_cmd.add_argument("--password")
 

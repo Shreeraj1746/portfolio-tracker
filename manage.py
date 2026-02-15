@@ -30,11 +30,15 @@ def create_user(username: str) -> int:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Portfolio Tracker management commands")
+    parser = argparse.ArgumentParser(
+        description="Portfolio Tracker management commands"
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
     create_user_parser = sub.add_parser("create-user", help="Create initial login user")
-    create_user_parser.add_argument("--username", required=True, help="Username for the new user")
+    create_user_parser.add_argument(
+        "--username", required=True, help="Username for the new user"
+    )
 
     args = parser.parse_args()
 

@@ -95,6 +95,8 @@ uvicorn app.main:app --reload
 ## Running Tests
 ```bash
 pytest -q
+
+pytest --cov=. --cov-report=term-missing
 ```
 
 Current tests cover:

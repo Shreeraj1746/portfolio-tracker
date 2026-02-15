@@ -64,7 +64,9 @@ def redirect_to_login() -> RedirectResponse:
     return RedirectResponse(url="/login", status_code=303)
 
 
-def render_template(request: Request, template_name: str, context: dict[str, Any]) -> Any:
+def render_template(
+    request: Request, template_name: str, context: dict[str, Any]
+) -> Any:
     """Render a template with common context variables."""
     templates = request.app.state.templates
     context = dict(context)
