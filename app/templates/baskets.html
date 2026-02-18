@@ -12,14 +12,15 @@
       </label>
 
       <div class="checkbox-list full-width">
-        <strong>Select market assets (optional weights)</strong>
+        <strong>Select market assets</strong>
+        <p class="muted">Basket composition is auto-calculated from current held shares.</p>
         {% for asset in assets %}
           <label class="asset-pick">
             <span>
               <input type="checkbox" name="asset_ids" value="{{ asset.id }}" />
               {{ asset.symbol }} <span class="muted">{{ asset.name }}</span>
             </span>
-            <input type="number" step="any" min="0" name="weight_{{ asset.id }}" placeholder="weight" />
+            <span class="muted">{{ asset_quantities.get(asset.id, 0)|number(6) }} shares</span>
           </label>
         {% else %}
           <p class="muted">No active market assets are available for baskets.</p>

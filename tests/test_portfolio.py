@@ -93,3 +93,14 @@ def test_sort_transactions_handles_naive_and_aware_datetimes() -> None:
 
     ordered = sort_transactions(txs)
     assert [tx.id for tx in ordered] == [2, 1]
+
+
+def test_market_position_allows_negative_buy_price_for_adjusted_basis() -> None:
+    txs = [
+        make_tx(1, TransactionType.BUY, quantity=0.5, price=-1000, fees=0),
+        make_tx(2, TransactionType.BUY, quantity=0.5, price=500, fees=0),
+    ]
+
+    state = compute_market_position(txs)
+    assert state.quantity == pytest.approx(1.0)
+    assert state.avg_cost == pytest.approx(-250.0)

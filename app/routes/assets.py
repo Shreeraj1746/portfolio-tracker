@@ -31,16 +31,25 @@ def _parse_datetime_local(value: str) -> datetime:
     return dt.astimezone(timezone.utc)
 
 
-def _parse_float(value: str, field_name: str, allow_zero: bool = True) -> float:
+def _parse_float(
+    value: str,
+    field_name: str,
+    allow_zero: bool = True,
+    allow_negative: bool = False,
+) -> float:
     try:
         number = float(value)
     except ValueError as exc:
         raise ValueError(f"{field_name} must be a number") from exc
 
-    if not allow_zero and number <= 0:
-        raise ValueError(f"{field_name} must be greater than zero")
-    if allow_zero and number < 0:
-        raise ValueError(f"{field_name} cannot be negative")
+    if allow_negative:
+        if not allow_zero and number == 0:
+            raise ValueError(f"{field_name} must be non-zero")
+    else:
+        if not allow_zero and number <= 0:
+            raise ValueError(f"{field_name} must be greater than zero")
+        if allow_zero and number < 0:
+            raise ValueError(f"{field_name} cannot be negative")
     return number
 
 
@@ -310,7 +319,19 @@ async def add_transaction(
             quantity = _parse_float(
                 str(form.get("quantity", "")), "Quantity", allow_zero=False
             )
-            price = _parse_float(str(form.get("price", "")), "Price", allow_zero=False)
+            if tx_enum == TransactionType.BUY:
+                price = _parse_float(
+                    str(form.get("price", "")),
+                    "Price",
+                    allow_zero=True,
+                    allow_negative=True,
+                )
+            else:
+                price = _parse_float(
+                    str(form.get("price", "")),
+                    "Price",
+                    allow_zero=False,
+                )
         elif tx_enum == TransactionType.MANUAL_VALUE_UPDATE:
             manual_value = _parse_float(
                 str(form.get("manual_value", "")), "Manual value", allow_zero=True
@@ -425,7 +446,19 @@ async def edit_transaction(
             quantity = _parse_float(
                 str(form.get("quantity", "")), "Quantity", allow_zero=False
             )
-            price = _parse_float(str(form.get("price", "")), "Price", allow_zero=False)
+            if tx_enum == TransactionType.BUY:
+                price = _parse_float(
+                    str(form.get("price", "")),
+                    "Price",
+                    allow_zero=True,
+                    allow_negative=True,
+                )
+            else:
+                price = _parse_float(
+                    str(form.get("price", "")),
+                    "Price",
+                    allow_zero=False,
+                )
         elif tx_enum == TransactionType.MANUAL_VALUE_UPDATE:
             manual_value = _parse_float(
                 str(form.get("manual_value", "")), "Manual value", allow_zero=True

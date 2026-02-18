@@ -1,61 +1,37 @@
 # Portfolio Tracker (FastAPI + SQLite)
 
-Private, single-user portfolio tracker with login, weighted-average cost basis, quote caching, and desktop-focused UI.
+Single-user portfolio tracker with authentication, transaction-based accounting, live quote refresh, and dashboard charts.
 
-## Features (MVP)
+## Features
 - USD-only portfolio tracking.
-- Username/password auth with secure password hashing.
-- Market assets (symbol-based) and manual-value assets.
-- Transactions: `BUY`, `SELL`, `MANUAL_VALUE_UPDATE`.
-- Weighted-average cost basis and deterministic recomputation from transaction history.
-- Quote provider abstraction with default `yfinance` implementation.
-- SQLite quote cache with 60s TTL and stale fallback on provider failure.
-- Dashboard auto-refresh every 60 seconds via `/api/quotes`.
-- Group subtotals, grand totals, allocation pie chart.
-- Asset performance line chart and basket normalized chart.
+- Username/password login with session auth.
+- Asset types:
+  - market assets (symbol-based)
+  - manual-value assets
+- Transaction types: `BUY`, `SELL`, `MANUAL_VALUE_UPDATE`.
+- Deterministic position recomputation from transaction history using weighted-average cost basis.
+- Dashboard with canonical totals, per-group subtotals, and allocation charts.
+- Baskets as derived overlays on top of canonical assets.
+- Charts:
+  - portfolio value over time
+  - unrealized PnL over time
+  - per-asset performance history
+  - basket normalized performance
+- Quote provider abstraction with default `yfinance` implementation, SQLite caching, and stale-cache fallback.
 
-## Tech Stack
+## Requirements
 - Python 3.11+
-- FastAPI + Jinja2 templates
-- SQLAlchemy + SQLite
-- Chart.js via CDN
+- Internet access for live quote refreshes (`yfinance`)
 
-## Project Layout
-```text
-app/
-  __init__.py
-  main.py
-  config.py
-  db.py
-  models.py
-  security.py
-  web.py
-  services/
-    pricing.py
-    portfolio.py
-  routes/
-    auth.py
-    dashboard.py
-    assets.py
-    baskets.py
-  templates/
-  static/
-main.py
-manage.py
-tests/
-requirements.txt
-README.md
-```
-
-## Local Setup
-1. Create a virtual environment and install dependencies:
+## Quick Start
+1. Create a virtual environment and install dependencies.
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-2. Configure environment variables (optional):
+2. Optionally set environment variables.
 ```bash
 export SECRET_KEY="replace-with-random-secret"
 export DATABASE_URL="sqlite:///./portfolio.db"
@@ -63,20 +39,21 @@ export QUOTE_TTL_SECONDS="60"
 export SESSION_HTTPS_ONLY="false"
 ```
 
-3. Create the initial user:
+3. Create the initial user (prompts for password; minimum 8 characters).
 ```bash
 python3 manage.py create-user --username admin
 ```
 
-4. Run the app locally:
+4. Run the app.
 ```bash
 uvicorn app.main:app --reload
 ```
 
-5. Open:
-- `http://127.0.0.1:8000/login`
+5. Open `http://127.0.0.1:8000/login`.
 
-## Environment Variables
+Tables are created automatically by startup/management flow if they do not already exist.
+
+## Configuration
 - `APP_NAME` (default: `Portfolio Tracker`)
 - `SECRET_KEY` (default: `change-me-in-production`)
 - `DATABASE_URL` (default: `sqlite:///./portfolio.db`)
@@ -84,29 +61,41 @@ uvicorn app.main:app --reload
 - `SESSION_COOKIE_NAME` (default: `portfolio_session`)
 - `SESSION_HTTPS_ONLY` (default: `false`)
 
-## Quote Provider Notes
+## Quote Behavior
 - Default provider is `yfinance`.
-- On quote fetch failure:
-  - Cached quote is reused (marked stale).
-  - If no cached quote exists, the UI shows unavailable data.
-- Refresh endpoint:
-  - `GET /api/quotes?symbols=AAPL,MSFT,BTC-USD`
+- Refresh endpoint: `GET /api/quotes?symbols=AAPL,MSFT,BTC`
+- Common crypto symbols (for example `BTC`, `ETH`, `SOL`) are mapped to provider `-USD` tickers automatically.
+- On provider failure:
+  - cached quote is reused and marked stale
+  - if no cached quote exists, quote data is unavailable
+
+## Basket Accounting Semantics
+- Basket rows are display overlays derived from current member asset rows.
+- Basket rows are excluded from canonical portfolio totals and canonical group allocation.
+- `basket_assets.weight` is retained only for backward compatibility and is not used for valuation.
 
 ## Running Tests
 ```bash
 pytest -q
-
 pytest --cov=. --cov-report=term-missing
 ```
 
-Current tests cover:
-- Weighted-average cost basis.
-- Deterministic recomputation after transaction edits.
-- Allocation percentages summing to approximately 100%.
+Test suite covers:
+- weighted-average math and invalid transaction handling
+- deterministic recomputation and allocation math
+- basket CRUD and basket overlay behavior
+- chart/series regressions around portfolio, asset, and basket views
 
-## Deployment Options ($0-friendly)
-- Local-first (primary): run on one local machine with SQLite.
-- Optional AWS serverless direction (not implemented):
-  - FastAPI behind API Gateway + Lambda adapter.
-  - Static assets/templates served by app or static hosting.
-  - Note: SQLite is not ideal for truly distributed serverless workloads; keep usage single-instance.
+## Project Layout
+```text
+app/
+  routes/         # FastAPI handlers (auth, dashboard, assets, baskets)
+  services/       # Pricing and portfolio/accounting logic
+  templates/      # Jinja2 templates
+  static/         # JS/CSS
+  config.py
+  db.py
+  models.py
+manage.py         # CLI management commands (create-user)
+tests/
+```

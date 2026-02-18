@@ -60,6 +60,7 @@ a:hover {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 16px;
+  align-items: start;
 }
 
 .panel {
@@ -191,6 +192,25 @@ button:hover {
   font-weight: 600;
 }
 
+.derived-row {
+  background: #fffdf7;
+}
+
+.section-separator td {
+  background: #f6f7f4;
+  font-weight: 600;
+}
+
+.badge {
+  margin-left: 8px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: #edf2ea;
+  border: 1px solid #ccd7c5;
+  color: #4f616d;
+  font-size: 0.75rem;
+}
+
 .summary-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(260px, 1fr));
@@ -298,4 +318,16 @@ button:hover {
 .inline-range-form {
   grid-template-columns: repeat(3, minmax(180px, auto));
   align-items: end;
+}
+
+.chart-range-form {
+  margin-bottom: 8px;
+}
+
+#pnlAssetSelectors {
+  margin-top: 10px;
+}
+
+#pnlAssetSelectors .checkbox-inline {
+  font-size: 0.9rem;
 }

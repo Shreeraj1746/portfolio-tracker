@@ -6,12 +6,16 @@ from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
 from app.models import Asset, AssetType, Basket, BasketAsset, Group, Transaction, TransactionType
 from app.services.portfolio import (
     allocation_by_asset,
     allocation_by_group,
+    build_basket_member_composition,
     build_dashboard_snapshot,
+    compute_overlay_pnl_series,
+    compute_portfolio_series,
     compute_basket_series,
     ensure_default_portfolio,
 )
@@ -63,7 +67,6 @@ def test_basket_crud(authed_client, csrf_token_for, db_session_factory):
             "csrf_token": token,
             "name": "growth basket",
             "asset_ids": [str(asset_a.id)],
-            f"weight_{asset_a.id}": "20",
         },
         follow_redirects=False,
     )
@@ -76,7 +79,7 @@ def test_basket_crud(authed_client, csrf_token_for, db_session_factory):
         links = list(db.scalars(select(BasketAsset).where(BasketAsset.basket_id == basket_id)))
         assert len(links) == 1
         assert links[0].asset_id == asset_a.id
-        assert links[0].weight == pytest.approx(20.0)
+        assert links[0].weight is None
 
     token = csrf_token_for(f"/baskets/{basket_id}/edit")
     response = authed_client.post(
@@ -85,8 +88,6 @@ def test_basket_crud(authed_client, csrf_token_for, db_session_factory):
             "csrf_token": token,
             "name": "unequal basket",
             "asset_ids": [str(asset_a.id), str(asset_b.id)],
-            f"weight_{asset_a.id}": "20",
-            f"weight_{asset_b.id}": "80",
         },
         follow_redirects=False,
     )
@@ -104,8 +105,8 @@ def test_basket_crud(authed_client, csrf_token_for, db_session_factory):
             )
         )
         assert len(links) == 2
-        assert links[0].weight == pytest.approx(20.0)
-        assert links[1].weight == pytest.approx(80.0)
+        assert links[0].weight is None
+        assert links[1].weight is None
 
     token = csrf_token_for(f"/baskets/{basket_id}/edit")
     response = authed_client.post(
@@ -114,7 +115,6 @@ def test_basket_crud(authed_client, csrf_token_for, db_session_factory):
             "csrf_token": token,
             "name": "unequal basket",
             "asset_ids": [str(asset_b.id)],
-            f"weight_{asset_b.id}": "100",
         },
         follow_redirects=False,
     )
@@ -141,7 +141,7 @@ def test_basket_crud(authed_client, csrf_token_for, db_session_factory):
         assert db.scalar(select(Asset).where(Asset.id == asset_b.id)) is not None
 
 
-def test_basket_weight_inputs_allow_whole_number_entry(
+def test_basket_inputs_show_live_share_defaults_and_no_weight_fields(
     authed_client,
     csrf_token_for,
     db_session_factory,
@@ -151,47 +151,158 @@ def test_basket_weight_inputs_allow_whole_number_entry(
         group = _seed_group(db, portfolio.id, "weights")
         asset = _make_market_asset(portfolio.id, group.id, "WGHT", "Weight Asset")
         db.add(asset)
+        db.flush()
+        db.add(
+            Transaction(
+                portfolio_id=portfolio.id,
+                asset_id=asset.id,
+                type=TransactionType.BUY,
+                timestamp=datetime(2026, 2, 15, 13, 0, tzinfo=timezone.utc),
+                quantity=12.5,
+                price=100,
+                fees=0,
+            )
+        )
         db.commit()
         db.refresh(asset)
         asset_id = asset.id
 
     response = authed_client.get("/baskets")
     assert response.status_code == 200
-    create_input_match = re.search(
-        rf'<input[^>]*name="weight_{asset_id}"[^>]*>',
-        response.text,
-    )
-    assert create_input_match is not None
-    assert 'step="any"' in create_input_match.group(0)
-    assert 'min="0"' in create_input_match.group(0)
+    assert f'name="weight_{asset_id}"' not in response.text
+    assert "12.500000 shares" in response.text
 
     token = csrf_token_for("/baskets")
     response = authed_client.post(
         "/baskets/create",
         data={
             "csrf_token": token,
-            "name": "weight check",
+            "name": "share check",
             "asset_ids": [str(asset_id)],
-            f"weight_{asset_id}": "20",
         },
         follow_redirects=False,
     )
     assert response.status_code in (302, 303)
 
     with db_session_factory() as db:
-        basket = db.scalar(select(Basket).where(Basket.name == "weight check"))
+        basket = db.scalar(select(Basket).where(Basket.name == "share check"))
         assert basket is not None
         basket_id = basket.id
 
     response = authed_client.get(f"/baskets/{basket_id}/edit")
     assert response.status_code == 200
-    edit_input_match = re.search(
-        rf'<input[^>]*name="weight_{asset_id}"[^>]*>',
-        response.text,
-    )
-    assert edit_input_match is not None
-    assert 'step="any"' in edit_input_match.group(0)
-    assert 'min="0"' in edit_input_match.group(0)
+    assert f'name="weight_{asset_id}"' not in response.text
+    assert "12.500000 shares" in response.text
+
+
+def test_basket_composition_auto_updates_when_share_counts_change(
+    db_session_factory,
+    app,
+    mock_provider,
+):
+    mock_provider.set_latest("AUTOA", 200.0)
+    mock_provider.set_latest("AUTOB", 50.0)
+
+    with db_session_factory() as db:
+        portfolio = ensure_default_portfolio(db)
+        group = _seed_group(db, portfolio.id, "auto")
+        asset_a = _make_market_asset(portfolio.id, group.id, "AUTOA", "Auto A")
+        asset_b = _make_market_asset(portfolio.id, group.id, "AUTOB", "Auto B")
+        db.add_all([asset_a, asset_b])
+        db.flush()
+
+        db.add_all(
+            [
+                Transaction(
+                    portfolio_id=portfolio.id,
+                    asset_id=asset_a.id,
+                    type=TransactionType.BUY,
+                    timestamp=datetime(2026, 2, 15, 13, 0, tzinfo=timezone.utc),
+                    quantity=2.0,
+                    price=100.0,
+                    fees=0.0,
+                ),
+                Transaction(
+                    portfolio_id=portfolio.id,
+                    asset_id=asset_b.id,
+                    type=TransactionType.BUY,
+                    timestamp=datetime(2026, 2, 15, 13, 0, tzinfo=timezone.utc),
+                    quantity=8.0,
+                    price=100.0,
+                    fees=0.0,
+                ),
+            ]
+        )
+
+        basket = Basket(portfolio_id=portfolio.id, name="auto basket")
+        db.add(basket)
+        db.flush()
+        db.add_all(
+            [
+                BasketAsset(basket_id=basket.id, asset_id=asset_a.id, weight=None),
+                BasketAsset(basket_id=basket.id, asset_id=asset_b.id, weight=None),
+            ]
+        )
+        db.commit()
+
+        loaded = db.scalar(
+            select(Basket)
+            .where(Basket.id == basket.id)
+            .options(
+                selectinload(Basket.assets)
+                .selectinload(BasketAsset.asset)
+                .selectinload(Asset.transactions)
+            )
+        )
+        assert loaded is not None
+        before = build_basket_member_composition(
+            db,
+            app.state.pricing_service,
+            loaded.assets,
+        )
+        before_map = {row.symbol: row.allocation_pct for row in before}
+        before_values = {row.symbol: row.current_value for row in before}
+        assert before_values["AUTOA"] == pytest.approx(400.0)
+        assert before_values["AUTOB"] == pytest.approx(400.0)
+        assert before_map["AUTOA"] == pytest.approx(50.0)
+        assert before_map["AUTOB"] == pytest.approx(50.0)
+        assert sum(before_map.values()) == pytest.approx(100.0)
+
+        db.add(
+            Transaction(
+                portfolio_id=portfolio.id,
+                asset_id=asset_a.id,
+                type=TransactionType.BUY,
+                timestamp=datetime(2026, 2, 16, 13, 0, tzinfo=timezone.utc),
+                quantity=8.0,
+                price=100.0,
+                fees=0.0,
+            )
+        )
+        db.commit()
+
+        loaded_after = db.scalar(
+            select(Basket)
+            .where(Basket.id == basket.id)
+            .options(
+                selectinload(Basket.assets)
+                .selectinload(BasketAsset.asset)
+                .selectinload(Asset.transactions)
+            )
+        )
+        assert loaded_after is not None
+        after = build_basket_member_composition(
+            db,
+            app.state.pricing_service,
+            loaded_after.assets,
+        )
+        after_map = {row.symbol: row.allocation_pct for row in after}
+        after_values = {row.symbol: row.current_value for row in after}
+        assert after_values["AUTOA"] == pytest.approx(2000.0)
+        assert after_values["AUTOB"] == pytest.approx(400.0)
+        assert after_map["AUTOA"] == pytest.approx((2000.0 / 2400.0) * 100.0)
+        assert after_map["AUTOB"] == pytest.approx((400.0 / 2400.0) * 100.0)
+        assert sum(after_map.values()) == pytest.approx(100.0)
 
 
 def test_asset_create_with_initial_holdings_and_manual_values(
@@ -523,6 +634,65 @@ def test_crypto_symbol_alias_uses_usd_quote(db_session_factory, app, mock_provid
     assert row.current_value == pytest.approx(17375.0)
 
 
+def test_btc_position_with_negative_cost_basis_pnl_is_computed_correctly(
+    authed_client,
+    csrf_token_for,
+    db_session_factory,
+    app,
+    mock_provider,
+):
+    quantity = 0.157426328
+    current_price = 68846.0
+    target_unrealized_pnl = 22509.29
+    buy_price = current_price - (target_unrealized_pnl / quantity)
+
+    mock_provider.set_latest("BTC-USD", current_price)
+
+    with db_session_factory() as db:
+        portfolio = ensure_default_portfolio(db)
+        crypto = _seed_group(db, portfolio.id, "crypto")
+        group_id = crypto.id
+        db.commit()
+
+    page = authed_client.get("/")
+    assert page.status_code == 200
+    initial_buy_match = re.search(
+        r'<input[^>]*name="initial_buy_price"[^>]*>',
+        page.text,
+    )
+    assert initial_buy_match is not None
+    assert 'min="0"' not in initial_buy_match.group(0)
+
+    token = csrf_token_for("/")
+    response = authed_client.post(
+        "/assets",
+        data={
+            "csrf_token": token,
+            "symbol": "BTC",
+            "name": "Bitcoin",
+            "asset_type": "market",
+            "group_id": str(group_id),
+            "initial_quantity": str(quantity),
+            "initial_buy_price": f"{buy_price:.12f}",
+            "initial_fees": "0",
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code in (302, 303)
+
+    with db_session_factory() as db:
+        portfolio = ensure_default_portfolio(db)
+        snapshot = build_dashboard_snapshot(db, app.state.pricing_service, portfolio.id)
+        row = next((entry for entry in snapshot.positions if entry.symbol == "BTC"), None)
+
+    assert row is not None
+    assert row.quantity == pytest.approx(quantity)
+    assert row.current_price == pytest.approx(current_price)
+    assert row.current_value == pytest.approx(quantity * current_price, abs=0.01)
+    assert row.unrealized_pnl is not None
+    assert row.unrealized_pnl == pytest.approx(target_unrealized_pnl, abs=0.01)
+
+
 def test_allocation_by_group_with_market_and_manual(db_session_factory, app, mock_provider):
     mock_provider.set_latest("ALOC1", 150.0)
 
@@ -583,15 +753,41 @@ def test_basket_series_normalization_and_intersection(mock_provider):
     mock_provider.set_history("CRWD", [(d1, 100.0), (d2, 110.0), (d3, 120.0)])
     mock_provider.set_history("PANW", [(d2, 200.0), (d3, 220.0)])
 
+    tx_crwd = SimpleNamespace(
+        id=1,
+        type=TransactionType.BUY,
+        timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        quantity=2.0,
+        price=100.0,
+        fees=0.0,
+        manual_value=None,
+    )
+    tx_panw = SimpleNamespace(
+        id=2,
+        type=TransactionType.BUY,
+        timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        quantity=8.0,
+        price=200.0,
+        fees=0.0,
+        manual_value=None,
+    )
     link_crwd = SimpleNamespace(
         asset_id=1,
-        weight=20.0,
-        asset=SimpleNamespace(symbol="CRWD", asset_type=AssetType.MARKET, is_archived=False),
+        asset=SimpleNamespace(
+            symbol="CRWD",
+            asset_type=AssetType.MARKET,
+            is_archived=False,
+            transactions=[tx_crwd],
+        ),
     )
     link_panw = SimpleNamespace(
         asset_id=2,
-        weight=80.0,
-        asset=SimpleNamespace(symbol="PANW", asset_type=AssetType.MARKET, is_archived=False),
+        asset=SimpleNamespace(
+            symbol="PANW",
+            asset_type=AssetType.MARKET,
+            is_archived=False,
+            transactions=[tx_panw],
+        ),
     )
 
     result = compute_basket_series(pricing, [link_crwd, link_panw], start=d1, end=d3)
@@ -614,15 +810,41 @@ def test_basket_series_reports_missing_members(mock_provider):
     mock_provider.set_history("CRWD", [(d1, 100.0), (d2, 105.0)])
     mock_provider.set_history("MISSING", [])
 
+    tx_crwd = SimpleNamespace(
+        id=1,
+        type=TransactionType.BUY,
+        timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        quantity=1.0,
+        price=100.0,
+        fees=0.0,
+        manual_value=None,
+    )
+    tx_missing = SimpleNamespace(
+        id=2,
+        type=TransactionType.BUY,
+        timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        quantity=1.0,
+        price=100.0,
+        fees=0.0,
+        manual_value=None,
+    )
     link_crwd = SimpleNamespace(
         asset_id=1,
-        weight=50.0,
-        asset=SimpleNamespace(symbol="CRWD", asset_type=AssetType.MARKET, is_archived=False),
+        asset=SimpleNamespace(
+            symbol="CRWD",
+            asset_type=AssetType.MARKET,
+            is_archived=False,
+            transactions=[tx_crwd],
+        ),
     )
     link_missing = SimpleNamespace(
         asset_id=2,
-        weight=50.0,
-        asset=SimpleNamespace(symbol="MISSING", asset_type=AssetType.MARKET, is_archived=False),
+        asset=SimpleNamespace(
+            symbol="MISSING",
+            asset_type=AssetType.MARKET,
+            is_archived=False,
+            transactions=[tx_missing],
+        ),
     )
 
     result = compute_basket_series(pricing, [link_crwd, link_missing], start=d1, end=d2)
@@ -690,8 +912,8 @@ def test_dashboard_snapshot_includes_basket_as_first_class_row(
         db.flush()
         db.add_all(
             [
-                BasketAsset(basket_id=basket.id, asset_id=crwd.id, weight=20.0),
-                BasketAsset(basket_id=basket.id, asset_id=panw.id, weight=80.0),
+                BasketAsset(basket_id=basket.id, asset_id=crwd.id, weight=None),
+                BasketAsset(basket_id=basket.id, asset_id=panw.id, weight=None),
             ]
         )
         basket_id = basket.id
@@ -718,11 +940,23 @@ def test_dashboard_snapshot_includes_basket_as_first_class_row(
     assert basket_row is not None
     assert basket_row.symbol == f"BASKET:{basket_id}"
     assert basket_row.detail_path == f"/baskets/{basket_id}"
-    assert basket_row.current_value == pytest.approx(1600.0)
+    assert basket_row.current_value == pytest.approx(5000.0)
+    assert basket_row.unrealized_pnl == pytest.approx(600.0)
+    assert basket_row.counts_in_totals is False
+    assert basket_row.counts_in_allocation is False
+    assert basket_row.valuation_scope == "derived"
+    assert basket_row.basket_member_ids == [crwd.id, panw.id]
     assert "baskets" not in group_values
     assert group_values["stonks"] == pytest.approx(5300.0)
+    assert snapshot.canonical_total_value == pytest.approx(5300.0)
+    assert snapshot.canonical_total_unrealized_pnl == pytest.approx(620.0)
+    assert snapshot.derived_total_value == pytest.approx(5000.0)
+    assert snapshot.derived_total_unrealized_pnl == pytest.approx(600.0)
+    assert snapshot.total_value == pytest.approx(5300.0)
+    assert snapshot.total_unrealized_pnl == pytest.approx(620.0)
+    assert snapshot.group_totals["stonks"]["value"] == pytest.approx(5300.0)
 
-    assert asset_values["cybersecurity"] == pytest.approx(1600.0)
+    assert asset_values["cybersecurity"] == pytest.approx(5000.0)
     assert asset_values["MSFT"] == pytest.approx(300.0)
     assert "CRWD" not in asset_values
     assert "PANW" not in asset_values
@@ -734,3 +968,409 @@ def test_dashboard_snapshot_includes_basket_as_first_class_row(
     assert "Allocation By Asset" in response.text
     assert "allocationByGroupChart" in response.text
     assert "allocationByAssetChart" in response.text
+    assert "Derived Baskets (excluded from canonical totals)" in response.text
+    assert 'data-counts-in-totals="0"' in response.text
+
+
+def test_compute_portfolio_series_uses_forward_fill_and_manual_step(
+    db_session_factory,
+    app,
+    mock_provider,
+):
+    d1 = date(2025, 1, 1)
+    d2 = date(2025, 1, 2)
+    d3 = date(2025, 1, 3)
+    d4 = date(2025, 1, 4)
+    d5 = date(2025, 1, 5)
+
+    mock_provider.set_history("MKT", [(d1, 100.0), (d3, 110.0), (d5, 120.0)])
+
+    with db_session_factory() as db:
+        portfolio = ensure_default_portfolio(db)
+        g1 = _seed_group(db, portfolio.id, "stonks")
+        g2 = _seed_group(db, portfolio.id, "manual")
+        market = _make_market_asset(portfolio.id, g1.id, "MKT", "Market")
+        manual = _make_manual_asset(portfolio.id, g2.id, "HOUSE", "House")
+        db.add_all([market, manual])
+        db.flush()
+
+        db.add(
+            Transaction(
+                portfolio_id=portfolio.id,
+                asset_id=market.id,
+                type=TransactionType.BUY,
+                timestamp=datetime(2025, 1, 1, 9, 0, tzinfo=timezone.utc),
+                quantity=2.0,
+                price=90.0,
+                fees=0.0,
+            )
+        )
+        db.add_all(
+            [
+                Transaction(
+                    portfolio_id=portfolio.id,
+                    asset_id=manual.id,
+                    type=TransactionType.MANUAL_VALUE_UPDATE,
+                    timestamp=datetime(2025, 1, 2, 9, 0, tzinfo=timezone.utc),
+                    manual_value=50.0,
+                ),
+                Transaction(
+                    portfolio_id=portfolio.id,
+                    asset_id=manual.id,
+                    type=TransactionType.MANUAL_VALUE_UPDATE,
+                    timestamp=datetime(2025, 1, 4, 9, 0, tzinfo=timezone.utc),
+                    manual_value=80.0,
+                ),
+            ]
+        )
+        db.commit()
+
+        result = compute_portfolio_series(
+            db=db,
+            pricing_service=app.state.pricing_service,
+            portfolio_id=portfolio.id,
+            start=d1,
+            end=d5,
+        )
+
+    assert result.error_message is None
+    assert result.missing_symbols == []
+    assert [point.date for point in result.points] == [d1, d2, d3, d4, d5]
+    assert [point.total_value_usd for point in result.points] == pytest.approx(
+        [200.0, 250.0, 270.0, 300.0, 320.0]
+    )
+
+
+def test_compute_portfolio_series_excludes_basket_overlays(
+    db_session_factory,
+    app,
+    mock_provider,
+):
+    d1 = date(2025, 1, 1)
+    d2 = date(2025, 1, 2)
+    mock_provider.set_history("CYBR", [(d1, 100.0), (d2, 110.0)])
+
+    with db_session_factory() as db:
+        portfolio = ensure_default_portfolio(db)
+        group = _seed_group(db, portfolio.id, "stonks")
+        asset = _make_market_asset(portfolio.id, group.id, "CYBR", "Cyber")
+        db.add(asset)
+        db.flush()
+        db.add(
+            Transaction(
+                portfolio_id=portfolio.id,
+                asset_id=asset.id,
+                type=TransactionType.BUY,
+                timestamp=datetime(2025, 1, 1, 9, 0, tzinfo=timezone.utc),
+                quantity=3.0,
+                price=90.0,
+                fees=0.0,
+            )
+        )
+        basket = Basket(portfolio_id=portfolio.id, name="overlay")
+        db.add(basket)
+        db.flush()
+        db.add(BasketAsset(basket_id=basket.id, asset_id=asset.id, weight=None))
+        db.commit()
+
+        result = compute_portfolio_series(
+            db=db,
+            pricing_service=app.state.pricing_service,
+            portfolio_id=portfolio.id,
+            start=d1,
+            end=d2,
+        )
+
+    assert result.error_message is None
+    assert [point.total_value_usd for point in result.points] == pytest.approx([300.0, 330.0])
+
+
+def test_dashboard_includes_portfolio_chart_payload(
+    authed_client,
+    db_session_factory,
+    mock_provider,
+):
+    # Use a simple latest quote path to ensure dashboard has a non-empty series.
+    mock_provider.set_latest("CHART", 50.0)
+    mock_provider.set_history("CHART", [(date.today(), 50.0)])
+
+    with db_session_factory() as db:
+        portfolio = ensure_default_portfolio(db)
+        group = _seed_group(db, portfolio.id, "charting")
+        asset = _make_market_asset(portfolio.id, group.id, "CHART", "Chart Asset")
+        db.add(asset)
+        db.flush()
+        db.add(
+            Transaction(
+                portfolio_id=portfolio.id,
+                asset_id=asset.id,
+                type=TransactionType.BUY,
+                timestamp=datetime.now(timezone.utc),
+                quantity=1.0,
+                price=40.0,
+                fees=0.0,
+            )
+        )
+        db.commit()
+
+    response = authed_client.get("/")
+    assert response.status_code == 200
+    assert "Portfolio Value (USD)" in response.text
+    assert "portfolioSeriesLabels" in response.text
+    assert "portfolioSeriesValues" in response.text
+
+
+def test_overlapping_baskets_do_not_change_canonical_totals(
+    db_session_factory,
+    app,
+    mock_provider,
+):
+    mock_provider.set_latest("OVA", 100.0)
+    mock_provider.set_latest("OVB", 50.0)
+
+    with db_session_factory() as db:
+        portfolio = ensure_default_portfolio(db)
+        group = _seed_group(db, portfolio.id, "stonks")
+        a = _make_market_asset(portfolio.id, group.id, "OVA", "Overlap A")
+        b = _make_market_asset(portfolio.id, group.id, "OVB", "Overlap B")
+        db.add_all([a, b])
+        db.flush()
+
+        db.add_all(
+            [
+                Transaction(
+                    portfolio_id=portfolio.id,
+                    asset_id=a.id,
+                    type=TransactionType.BUY,
+                    timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                    quantity=2.0,
+                    price=90.0,
+                    fees=0.0,
+                ),
+                Transaction(
+                    portfolio_id=portfolio.id,
+                    asset_id=b.id,
+                    type=TransactionType.BUY,
+                    timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                    quantity=4.0,
+                    price=40.0,
+                    fees=0.0,
+                ),
+            ]
+        )
+
+        basket_one = Basket(portfolio_id=portfolio.id, name="basket one")
+        basket_two = Basket(portfolio_id=portfolio.id, name="basket two")
+        db.add_all([basket_one, basket_two])
+        db.flush()
+        db.add_all(
+            [
+                BasketAsset(basket_id=basket_one.id, asset_id=a.id, weight=None),
+                BasketAsset(basket_id=basket_two.id, asset_id=a.id, weight=None),
+                BasketAsset(basket_id=basket_two.id, asset_id=b.id, weight=None),
+            ]
+        )
+        db.commit()
+
+        snapshot = build_dashboard_snapshot(db, app.state.pricing_service, portfolio.id)
+        derived_rows = [row for row in snapshot.positions if row.row_kind == "basket"]
+
+    assert snapshot.canonical_total_value == pytest.approx(400.0)
+    assert snapshot.canonical_total_unrealized_pnl == pytest.approx(60.0)
+    assert len(derived_rows) == 2
+    derived_values = {row.name: row.current_value for row in derived_rows}
+    assert derived_values["basket one"] == pytest.approx(200.0)
+    assert derived_values["basket two"] == pytest.approx(400.0)
+
+
+def test_dashboard_allows_setting_chart_time_range(
+    authed_client,
+    db_session_factory,
+    mock_provider,
+):
+    d1 = date(2025, 1, 1)
+    d2 = date(2025, 1, 2)
+    d3 = date(2025, 1, 3)
+    d4 = date(2025, 1, 4)
+    d5 = date(2025, 1, 5)
+    mock_provider.set_history("RANGE", [(d1, 100.0), (d2, 101.0), (d3, 102.0), (d4, 103.0), (d5, 104.0)])
+    mock_provider.set_latest("RANGE", 104.0)
+
+    with db_session_factory() as db:
+        portfolio = ensure_default_portfolio(db)
+        group = _seed_group(db, portfolio.id, "range")
+        asset = _make_market_asset(portfolio.id, group.id, "RANGE", "Range Asset")
+        db.add(asset)
+        db.flush()
+        db.add(
+            Transaction(
+                portfolio_id=portfolio.id,
+                asset_id=asset.id,
+                type=TransactionType.BUY,
+                timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
+                quantity=1.0,
+                price=90.0,
+                fees=0.0,
+            )
+        )
+        db.commit()
+
+    response = authed_client.get("/?chart_start=2025-01-02&chart_end=2025-01-04")
+    assert response.status_code == 200
+    assert 'name="chart_start" value="2025-01-02"' in response.text
+    assert 'name="chart_end" value="2025-01-04"' in response.text
+    assert 'portfolioSeriesLabels: ["2025-01-02", "2025-01-03", "2025-01-04"]' in response.text
+
+
+def test_overlay_pnl_series_excludes_basket_members_and_combines_basket(
+    db_session_factory,
+    app,
+    mock_provider,
+):
+    d1 = date(2025, 1, 1)
+    d2 = date(2025, 1, 2)
+    mock_provider.set_history("PNA", [(d1, 90.0), (d2, 110.0)])
+    mock_provider.set_history("PNB", [(d1, 55.0), (d2, 45.0)])
+    mock_provider.set_history("PNC", [(d1, 30.0), (d2, 10.0)])
+
+    with db_session_factory() as db:
+        portfolio = ensure_default_portfolio(db)
+        group = _seed_group(db, portfolio.id, "pnl")
+        asset_a = _make_market_asset(portfolio.id, group.id, "PNA", "PnL A")
+        asset_b = _make_market_asset(portfolio.id, group.id, "PNB", "PnL B")
+        asset_c = _make_market_asset(portfolio.id, group.id, "PNC", "PnL C")
+        db.add_all([asset_a, asset_b, asset_c])
+        db.flush()
+
+        db.add_all(
+            [
+                Transaction(
+                    portfolio_id=portfolio.id,
+                    asset_id=asset_a.id,
+                    type=TransactionType.BUY,
+                    timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
+                    quantity=1.0,
+                    price=100.0,
+                    fees=0.0,
+                ),
+                Transaction(
+                    portfolio_id=portfolio.id,
+                    asset_id=asset_b.id,
+                    type=TransactionType.BUY,
+                    timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
+                    quantity=2.0,
+                    price=50.0,
+                    fees=0.0,
+                ),
+                Transaction(
+                    portfolio_id=portfolio.id,
+                    asset_id=asset_c.id,
+                    type=TransactionType.BUY,
+                    timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
+                    quantity=1.0,
+                    price=20.0,
+                    fees=0.0,
+                ),
+            ]
+        )
+
+        basket = Basket(portfolio_id=portfolio.id, name="PnL Basket")
+        db.add(basket)
+        db.flush()
+        db.add_all(
+            [
+                BasketAsset(basket_id=basket.id, asset_id=asset_a.id, weight=None),
+                BasketAsset(basket_id=basket.id, asset_id=asset_b.id, weight=None),
+            ]
+        )
+        db.commit()
+
+        result = compute_overlay_pnl_series(
+            db=db,
+            pricing_service=app.state.pricing_service,
+            portfolio_id=portfolio.id,
+            start=d1,
+            end=d2,
+        )
+
+    assert result.error_message is None
+    assert result.dates == [d1, d2]
+    assert "PNA" not in result.series_by_label
+    assert "PNB" not in result.series_by_label
+    assert result.series_by_label["PnL Basket"] == pytest.approx([0.0, 0.0])
+    assert result.series_by_label["PNC"] == pytest.approx([10.0, -10.0])
+
+
+def test_dashboard_pnl_chart_selectors_include_baskets_and_exclude_members(
+    authed_client,
+    db_session_factory,
+    mock_provider,
+):
+    d1 = date.today()
+    mock_provider.set_history("SEL1", [(d1, 100.0)])
+    mock_provider.set_history("SEL2", [(d1, 200.0)])
+    mock_provider.set_history("SEL3", [(d1, 300.0)])
+    mock_provider.set_latest("SEL1", 100.0)
+    mock_provider.set_latest("SEL2", 200.0)
+    mock_provider.set_latest("SEL3", 300.0)
+
+    with db_session_factory() as db:
+        portfolio = ensure_default_portfolio(db)
+        group = _seed_group(db, portfolio.id, "selectors")
+        a = _make_market_asset(portfolio.id, group.id, "SEL1", "Selector 1")
+        b = _make_market_asset(portfolio.id, group.id, "SEL2", "Selector 2")
+        c = _make_market_asset(portfolio.id, group.id, "SEL3", "Selector 3")
+        db.add_all([a, b, c])
+        db.flush()
+
+        now = datetime.now(timezone.utc)
+        db.add_all(
+            [
+                Transaction(
+                    portfolio_id=portfolio.id,
+                    asset_id=a.id,
+                    type=TransactionType.BUY,
+                    timestamp=now,
+                    quantity=1.0,
+                    price=90.0,
+                    fees=0.0,
+                ),
+                Transaction(
+                    portfolio_id=portfolio.id,
+                    asset_id=b.id,
+                    type=TransactionType.BUY,
+                    timestamp=now,
+                    quantity=1.0,
+                    price=190.0,
+                    fees=0.0,
+                ),
+                Transaction(
+                    portfolio_id=portfolio.id,
+                    asset_id=c.id,
+                    type=TransactionType.BUY,
+                    timestamp=now,
+                    quantity=1.0,
+                    price=290.0,
+                    fees=0.0,
+                ),
+            ]
+        )
+
+        basket = Basket(portfolio_id=portfolio.id, name="Selector Basket")
+        db.add(basket)
+        db.flush()
+        db.add_all(
+            [
+                BasketAsset(basket_id=basket.id, asset_id=a.id, weight=None),
+                BasketAsset(basket_id=basket.id, asset_id=b.id, weight=None),
+            ]
+        )
+        db.commit()
+
+    response = authed_client.get("/")
+    assert response.status_code == 200
+    assert 'id="pnlChart"' in response.text
+    assert 'value="Selector Basket"' in response.text
+    assert 'value="SEL3"' in response.text
+    assert 'value="SEL1"' not in response.text
+    assert 'value="SEL2"' not in response.text

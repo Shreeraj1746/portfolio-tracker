@@ -13,22 +13,16 @@
     </label>
 
     <div class="checkbox-list full-width">
-      <strong>Members and weights</strong>
+      <strong>Members</strong>
+      <p class="muted">Share ratios are derived automatically from current holdings.</p>
       {% for asset in assets %}
-        {% set checked = asset.id in selected %}
+        {% set checked = asset.id in selected_ids %}
         <label class="asset-pick">
           <span>
             <input type="checkbox" name="asset_ids" value="{{ asset.id }}" {% if checked %}checked{% endif %} />
             {{ asset.symbol }} <span class="muted">{{ asset.name }}</span>
           </span>
-          <input
-            type="number"
-            step="any"
-            min="0"
-            name="weight_{{ asset.id }}"
-            value="{{ selected.get(asset.id, '') if selected.get(asset.id) is not none else '' }}"
-            placeholder="weight"
-          />
+          <span class="muted">{{ asset_quantities.get(asset.id, 0)|number(6) }} shares</span>
         </label>
       {% else %}
         <p class="muted">No active market assets available.</p>

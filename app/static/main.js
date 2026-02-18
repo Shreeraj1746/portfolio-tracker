@@ -111,6 +111,67 @@ function renderLineChart(chartKey, canvasId, labels, values, datasetLabel, color
   });
 }
 
+function renderPnlChart(canvasId, labels, values) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas || !window.Chart) return;
+
+  destroyChart("pnl");
+  charts.pnl = new Chart(canvas.getContext("2d"), {
+    type: "line",
+    data: {
+      labels,
+      datasets: [
+        {
+          label: "Unrealized PnL (USD)",
+          data: values,
+          pointRadius: 0,
+          tension: 0.15,
+          fill: {
+            target: "origin",
+            above: "rgba(17, 119, 68, 0.18)",
+            below: "rgba(181, 51, 51, 0.18)",
+          },
+          segment: {
+            borderColor(ctx) {
+              const p0 = ctx.p0?.parsed?.y ?? 0;
+              const p1 = ctx.p1?.parsed?.y ?? 0;
+              if (p0 >= 0 && p1 >= 0) return "#117744";
+              if (p0 < 0 && p1 < 0) return "#b53333";
+              return "#4f616d";
+            },
+          },
+          borderWidth: 2,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        y: {
+          ticks: {
+            callback(value) {
+              return formatUsd(Number(value));
+            },
+          },
+        },
+      },
+      plugins: {
+        legend: {
+          position: "top",
+        },
+        tooltip: {
+          callbacks: {
+            label(context) {
+              return `${context.dataset.label}: ${formatUsd(Number(context.raw))}`;
+            },
+          },
+        },
+      },
+    },
+  });
+}
+
 function initAssetCreateForm() {
   const form = document.getElementById("assetCreateForm");
   const typeSelect = document.getElementById("assetTypeSelect");
@@ -174,30 +235,98 @@ function updateDashboardTable() {
   const groupTotals = new Map();
   const groupChartTotals = new Map();
   const assetChartValues = new Map();
+  const assetRowsById = new Map();
 
   let grandValue = 0;
   let grandPnl = 0;
+  let derivedValue = 0;
+  let derivedPnl = 0;
+
+  rows.forEach((row) => {
+    if ((row.dataset.rowKind || "asset") !== "basket") {
+      const assetId = Number(row.dataset.assetId || 0);
+      if (!Number.isNaN(assetId) && assetId > 0) {
+        assetRowsById.set(assetId, row);
+      }
+    }
+  });
+
+  // Keep derived basket rows in sync when live quotes update member asset rows.
+  rows.forEach((row) => {
+    if ((row.dataset.rowKind || "asset") !== "basket") return;
+
+    const memberIds = (row.dataset.basketMemberIds || "")
+      .split(",")
+      .map((value) => Number(value))
+      .filter((value) => Number.isFinite(value) && value > 0);
+
+    let basketValue = 0;
+    let basketPnl = 0;
+    let hasBasketPnl = false;
+    let latestAsOfIso = "";
+
+    memberIds.forEach((memberId) => {
+      const memberRow = assetRowsById.get(memberId);
+      if (!memberRow) return;
+
+      basketValue += Number(memberRow.dataset.currentValue || 0);
+
+      const memberPnlRaw = memberRow.dataset.currentPnl;
+      if (memberPnlRaw !== "" && memberPnlRaw !== undefined) {
+        const memberPnl = Number(memberPnlRaw);
+        if (!Number.isNaN(memberPnl)) {
+          basketPnl += memberPnl;
+          hasBasketPnl = true;
+        }
+      }
+
+      const memberAsOfIso = memberRow.dataset.asOfIso || "";
+      if (memberAsOfIso && (!latestAsOfIso || memberAsOfIso > latestAsOfIso)) {
+        latestAsOfIso = memberAsOfIso;
+      }
+    });
+
+    row.dataset.currentValue = String(basketValue);
+    row.dataset.currentPnl = hasBasketPnl ? String(basketPnl) : "";
+    row.dataset.asOfIso = latestAsOfIso;
+
+    const asOfCell = row.querySelector(".as-of");
+    if (asOfCell) {
+      asOfCell.textContent = latestAsOfIso ? formatAsOf(latestAsOfIso) : "-";
+    }
+  });
 
   rows.forEach((row) => {
     const groupName = row.dataset.group || "Ungrouped";
     const value = Number(row.dataset.currentValue || 0);
     const pnlRaw = row.dataset.currentPnl;
     const pnl = pnlRaw === "" || pnlRaw === undefined ? null : Number(pnlRaw);
-
-    grandValue += value;
-    if (pnl !== null && !Number.isNaN(pnl)) {
-      grandPnl += pnl;
-    }
-
-    if (!groupTotals.has(groupName)) {
-      groupTotals.set(groupName, { value: 0, pnl: 0 });
-    }
-    const totals = groupTotals.get(groupName);
-    totals.value += value;
-    totals.pnl += pnl !== null && !Number.isNaN(pnl) ? pnl : 0;
-
+    const countsInTotals = row.dataset.countsInTotals === "1";
+    const countsInAllocation = row.dataset.countsInAllocation === "1";
     const rowKind = row.dataset.rowKind || "asset";
-    if (rowKind !== "basket") {
+
+    if (countsInTotals) {
+      grandValue += value;
+      if (pnl !== null && !Number.isNaN(pnl)) {
+        grandPnl += pnl;
+      }
+    } else {
+      derivedValue += value;
+      if (pnl !== null && !Number.isNaN(pnl)) {
+        derivedPnl += pnl;
+      }
+    }
+
+    if (countsInTotals) {
+      if (!groupTotals.has(groupName)) {
+        groupTotals.set(groupName, { value: 0, pnl: 0 });
+      }
+      const totals = groupTotals.get(groupName);
+      totals.value += value;
+      totals.pnl += pnl !== null && !Number.isNaN(pnl) ? pnl : 0;
+    }
+
+    if (countsInAllocation) {
       if (!groupChartTotals.has(groupName)) {
         groupChartTotals.set(groupName, 0);
       }
@@ -230,9 +359,17 @@ function updateDashboardTable() {
 
   rows.forEach((row) => {
     const value = Number(row.dataset.currentValue || 0);
-    const allocation = grandValue > 0 ? (value / grandValue) * 100 : 0;
     const allocCell = row.querySelector(".allocation");
-    if (allocCell) allocCell.textContent = formatPct(allocation);
+    if (!allocCell) return;
+
+    const countsInAllocation = row.dataset.countsInAllocation === "1";
+    if (!countsInAllocation) {
+      allocCell.textContent = "-";
+      return;
+    }
+
+    const allocation = grandValue > 0 ? (value / grandValue) * 100 : 0;
+    allocCell.textContent = formatPct(allocation);
   });
 
   groupTotals.forEach((totals, groupName) => {
@@ -258,6 +395,15 @@ function updateDashboardTable() {
     grandPnlCell.textContent = formatUsd(grandPnl);
     grandPnlCell.classList.toggle("positive", grandPnl >= 0);
     grandPnlCell.classList.toggle("negative", grandPnl < 0);
+  }
+
+  const derivedValueCell = document.getElementById("derivedTotalValue");
+  const derivedPnlCell = document.getElementById("derivedTotalPnl");
+  if (derivedValueCell) derivedValueCell.textContent = formatUsd(derivedValue);
+  if (derivedPnlCell) {
+    derivedPnlCell.textContent = formatUsd(derivedPnl);
+    derivedPnlCell.classList.toggle("positive", derivedPnl >= 0);
+    derivedPnlCell.classList.toggle("negative", derivedPnl < 0);
   }
 
   const groupChartEntries = Array.from(groupChartTotals.entries()).filter(([, value]) => value > 0);
@@ -326,6 +472,7 @@ async function pollQuotes() {
         if (quote.price === null || quote.price === undefined) {
           row.dataset.currentValue = "0";
           row.dataset.currentPnl = quantity > 0 ? String(-avgCost * quantity) : "";
+          row.dataset.asOfIso = quote.as_of || "";
           if (priceCell) priceCell.textContent = "-";
           if (asOfCell) asOfCell.textContent = quote.as_of ? formatAsOf(quote.as_of) : "-";
           return;
@@ -337,6 +484,7 @@ async function pollQuotes() {
 
         row.dataset.currentValue = String(value);
         row.dataset.currentPnl = String(pnl);
+        row.dataset.asOfIso = quote.as_of || "";
 
         if (priceCell) {
           priceCell.textContent = formatUsd(price);
@@ -357,6 +505,8 @@ function initDashboard() {
   if (!cfg) return;
 
   updateDashboardTable();
+  initPortfolioChart();
+  initPnlChartWithSelectors();
   pollQuotes();
   window.setInterval(pollQuotes, 60000);
 }
@@ -371,6 +521,70 @@ function initBasketChart() {
   const cfg = window.BASKET_CHART;
   if (!cfg || !Array.isArray(cfg.labels) || cfg.labels.length === 0) return;
   renderLineChart("basket", "basketChart", cfg.labels, cfg.values, "Basket (Base=100)", "#bc4749");
+}
+
+function initPortfolioChart() {
+  const cfg = window.PORTFOLIO_DASHBOARD;
+  if (!cfg) return;
+
+  const labels = Array.isArray(cfg.portfolioSeriesLabels) ? cfg.portfolioSeriesLabels : [];
+  const values = Array.isArray(cfg.portfolioSeriesValues) ? cfg.portfolioSeriesValues : [];
+  const canvas = document.getElementById("portfolioChart");
+  if (!canvas) return;
+
+  if (labels.length === 0 || values.length === 0) {
+    destroyChart("portfolio");
+    canvas.classList.add("hidden");
+    return;
+  }
+
+  canvas.classList.remove("hidden");
+  renderLineChart("portfolio", "portfolioChart", labels, values, "Portfolio Value (USD)", "#2a9d8f");
+}
+
+function initPnlChartWithSelectors() {
+  const cfg = window.PORTFOLIO_DASHBOARD;
+  if (!cfg) return;
+
+  const labels = Array.isArray(cfg.pnlSeriesLabels) ? cfg.pnlSeriesLabels : [];
+  const seriesByAsset = cfg.pnlSeriesByAsset && typeof cfg.pnlSeriesByAsset === "object"
+    ? cfg.pnlSeriesByAsset
+    : {};
+  const selectors = Array.from(document.querySelectorAll(".pnl-asset-selector"));
+  const canvas = document.getElementById("pnlChart");
+  const emptyMsg = document.getElementById("pnlSelectionEmpty");
+  if (!canvas) return;
+
+  const redraw = () => {
+    const selected = selectors
+      .filter((input) => input.checked)
+      .map((input) => input.value)
+      .filter((label) => Object.prototype.hasOwnProperty.call(seriesByAsset, label));
+
+    if (selected.length === 0 || labels.length === 0) {
+      destroyChart("pnl");
+      canvas.classList.add("hidden");
+      if (emptyMsg) emptyMsg.classList.remove("hidden");
+      return;
+    }
+
+    const combined = labels.map(() => 0);
+    selected.forEach((label) => {
+      const values = Array.isArray(seriesByAsset[label]) ? seriesByAsset[label] : [];
+      values.forEach((value, idx) => {
+        combined[idx] += Number(value || 0);
+      });
+    });
+
+    if (emptyMsg) emptyMsg.classList.add("hidden");
+    canvas.classList.remove("hidden");
+    renderPnlChart("pnlChart", labels, combined);
+  };
+
+  selectors.forEach((input) => {
+    input.addEventListener("change", redraw);
+  });
+  redraw();
 }
 
 document.addEventListener("DOMContentLoaded", () => {

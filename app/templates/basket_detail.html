@@ -20,18 +20,24 @@
       <tr>
         <th>Symbol</th>
         <th>Name</th>
-        <th>Weight</th>
+        <th>Held Shares</th>
+        <th>Current Price</th>
+        <th>Current Value</th>
+        <th>Composition %</th>
       </tr>
     </thead>
     <tbody>
-      {% for link in basket.assets %}
+      {% for member in member_composition %}
       <tr>
-        <td>{{ link.asset.symbol }}</td>
-        <td>{{ link.asset.name }}</td>
-        <td>{{ link.weight|number(4) if link.weight is not none else "Equal" }}</td>
+        <td>{{ member.symbol }}</td>
+        <td>{{ member.name }}</td>
+        <td>{{ member.quantity|number(6) }}</td>
+        <td>{{ member.current_price|currency if member.current_price is not none else "-" }}</td>
+        <td>{{ member.current_value|currency }}</td>
+        <td>{{ member.allocation_pct|pct }}</td>
       </tr>
       {% else %}
-      <tr><td colspan="3" class="muted">No members selected.</td></tr>
+      <tr><td colspan="6" class="muted">No members selected.</td></tr>
       {% endfor %}
     </tbody>
   </table>

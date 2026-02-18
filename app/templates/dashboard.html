@@ -42,7 +42,7 @@
       </label>
 
       <p class="hint" data-asset-type-note="market">
-        Market: Price auto-fetched, value = shares x price.
+        Market: Price auto-fetched, value = shares x price. Buy price can be negative for adjusted cost basis.
       </p>
       <p class="hint hidden" data-asset-type-note="manual">
         Manual: Value set manually (real estate, private), no live price.
@@ -54,7 +54,7 @@
       </label>
       <label data-asset-create-field="market">
         Initial buy price/share (USD)
-        <input type="number" step="0.0001" min="0" name="initial_buy_price" placeholder="0" />
+        <input type="number" step="0.0001" name="initial_buy_price" placeholder="0 (can be negative)" />
       </label>
       <label data-asset-create-field="market">
         Initial fees (optional)
@@ -94,6 +94,56 @@
 </section>
 
 <section class="panel">
+  <h2>Portfolio Value (USD)</h2>
+  <form method="get" action="/" class="form-grid compact inline-range-form chart-range-form">
+    <label>
+      Start date
+      <input type="date" name="chart_start" value="{{ chart_start }}" />
+    </label>
+    <label>
+      End date
+      <input type="date" name="chart_end" value="{{ chart_end }}" />
+    </label>
+    <button type="submit">Apply Range</button>
+  </form>
+  {% if portfolio_series_error %}
+    <p id="portfolioSeriesError" class="muted">{{ portfolio_series_error }}</p>
+  {% endif %}
+  {% if portfolio_series_missing_symbols %}
+    <p class="muted">Missing history for: {{ portfolio_series_missing_symbols|join(", ") }}</p>
+  {% endif %}
+  <div class="chart-wrap small">
+    <canvas id="portfolioChart" {% if not has_portfolio_series %}class="hidden"{% endif %}></canvas>
+  </div>
+</section>
+
+<section class="panel">
+  <h2>Portfolio Unrealized PnL (USD)</h2>
+  {% if pnl_series_error %}
+    <p id="pnlSeriesError" class="muted">{{ pnl_series_error }}</p>
+  {% endif %}
+  {% if pnl_series_missing_symbols %}
+    <p class="muted">Missing history for: {{ pnl_series_missing_symbols|join(", ") }}</p>
+  {% endif %}
+  <div class="checkbox-list full-width" id="pnlAssetSelectors">
+    <strong>PnL asset selectors</strong>
+    <p class="muted">Basket members are de-duplicated: only basket overlay rows are selectable.</p>
+    {% for label in pnl_selector_labels %}
+      <label class="checkbox-inline">
+        <input type="checkbox" class="pnl-asset-selector" value="{{ label }}" checked />
+        {{ label }}
+      </label>
+    {% else %}
+      <p class="muted">No assets available for PnL chart.</p>
+    {% endfor %}
+  </div>
+  <p id="pnlSelectionEmpty" class="muted hidden">Select at least one asset or basket.</p>
+  <div class="chart-wrap small">
+    <canvas id="pnlChart" {% if not has_pnl_series %}class="hidden"{% endif %}></canvas>
+  </div>
+</section>
+
+<section class="panel">
   <h2>Positions</h2>
   <table class="data-table" id="positionsTable">
     <thead>
@@ -110,7 +160,7 @@
       </tr>
     </thead>
     <tbody>
-      {% for group_name, rows in grouped_positions.items() %}
+      {% for group_name, rows in canonical_grouped_positions.items() %}
         {% for row in rows %}
           <tr
             class="asset-row"
@@ -123,14 +173,22 @@
             data-avg-cost="{{ row.avg_cost if row.avg_cost is not none else '' }}"
             data-current-value="{{ row.current_value }}"
             data-current-pnl="{{ row.unrealized_pnl if row.unrealized_pnl is not none else '' }}"
+            data-as-of-iso="{{ row.as_of.isoformat() if row.as_of else '' }}"
             data-in-basket-member="{{ 1 if row.in_basket_member else 0 }}"
             data-chart-label="{{ row.name if row.row_kind == 'basket' else row.symbol }}"
+            data-counts-in-totals="{{ 1 if row.counts_in_totals else 0 }}"
+            data-counts-in-allocation="{{ 1 if row.counts_in_allocation else 0 }}"
+            data-valuation-scope="{{ row.valuation_scope }}"
+            data-basket-member-ids=""
           >
             <td>
               <a href="{{ row.detail_path }}">{{ row.symbol }}</a>
               <span class="muted">{{ row.name }}</span>
               {% if row.row_kind == "asset" %}
                 <a class="tiny-link" href="/assets/{{ row.asset_id }}/edit">Edit</a>
+              {% endif %}
+              {% if row.display_badge %}
+                <span class="badge">{{ row.display_badge }}</span>
               {% endif %}
             </td>
             <td>{{ row.group_name }}</td>
@@ -147,17 +205,68 @@
         {% endfor %}
         <tr class="group-subtotal" data-group-subtotal="{{ group_name }}">
           <td colspan="6"><strong>{{ group_name }} subtotal</strong></td>
-          <td class="group-value">{{ group_totals[group_name]["value"]|currency }}</td>
-          <td class="group-pnl {{ 'positive' if group_totals[group_name]['pnl'] >= 0 else 'negative' }}">{{ group_totals[group_name]["pnl"]|currency }}</td>
+          <td class="group-value">{{ canonical_group_totals[group_name]["value"]|currency }}</td>
+          <td class="group-pnl {{ 'positive' if canonical_group_totals[group_name]['pnl'] >= 0 else 'negative' }}">{{ canonical_group_totals[group_name]["pnl"]|currency }}</td>
           <td></td>
         </tr>
       {% endfor %}
+
+      {% if derived_positions %}
+        <tr class="section-separator">
+          <td colspan="9"><strong>Derived Baskets (excluded from canonical totals)</strong></td>
+        </tr>
+        {% for row in derived_positions %}
+          <tr
+            class="asset-row derived-row"
+            data-asset-id="{{ row.asset_id }}"
+            data-symbol="{{ row.symbol }}"
+            data-group="{{ row.group_name }}"
+            data-asset-type="{{ row.asset_type.value }}"
+            data-row-kind="{{ row.row_kind }}"
+            data-quantity="{{ row.quantity if row.quantity is not none else '' }}"
+            data-avg-cost="{{ row.avg_cost if row.avg_cost is not none else '' }}"
+            data-current-value="{{ row.current_value }}"
+            data-current-pnl="{{ row.unrealized_pnl if row.unrealized_pnl is not none else '' }}"
+            data-as-of-iso="{{ row.as_of.isoformat() if row.as_of else '' }}"
+            data-in-basket-member="{{ 1 if row.in_basket_member else 0 }}"
+            data-chart-label="{{ row.name if row.row_kind == 'basket' else row.symbol }}"
+            data-counts-in-totals="{{ 1 if row.counts_in_totals else 0 }}"
+            data-counts-in-allocation="{{ 1 if row.counts_in_allocation else 0 }}"
+            data-valuation-scope="{{ row.valuation_scope }}"
+            data-basket-member-ids="{{ row.basket_member_ids|join(',') if row.basket_member_ids else '' }}"
+          >
+            <td>
+              <a href="{{ row.detail_path }}">{{ row.symbol }}</a>
+              <span class="muted">{{ row.name }}</span>
+              {% if row.display_badge %}
+                <span class="badge">{{ row.display_badge }}</span>
+              {% endif %}
+            </td>
+            <td>{{ row.group_name }}</td>
+            <td class="quantity-cell">{{ row.quantity|number(6) if row.quantity is not none else "-" }}</td>
+            <td class="avg-cost-cell">{{ row.avg_cost|currency if row.avg_cost is not none else "-" }}</td>
+            <td class="current-price {{ 'stale' if row.quote_stale else '' }}">{{ row.current_price|currency if row.current_price is not none else "-" }}</td>
+            <td class="as-of">{{ row.as_of|dt if row.as_of else "-" }}</td>
+            <td class="current-value">{{ row.current_value|currency }}</td>
+            <td class="pnl {{ 'positive' if (row.unrealized_pnl or 0) >= 0 else 'negative' }}">
+              {{ row.unrealized_pnl|currency if row.unrealized_pnl is not none else "-" }}
+            </td>
+            <td class="allocation">-</td>
+          </tr>
+        {% endfor %}
+        <tr class="group-subtotal derived-subtotal" data-derived-subtotal="baskets">
+          <td colspan="6"><strong>Derived baskets subtotal</strong></td>
+          <td id="derivedTotalValue">{{ derived_total_value|currency }}</td>
+          <td id="derivedTotalPnl" class="{{ 'positive' if derived_total_unrealized_pnl >= 0 else 'negative' }}">{{ derived_total_unrealized_pnl|currency }}</td>
+          <td></td>
+        </tr>
+      {% endif %}
     </tbody>
     <tfoot>
       <tr class="grand-total">
-        <td colspan="6"><strong>Grand Total</strong></td>
-        <td id="grandTotalValue">{{ total_value|currency }}</td>
-        <td id="grandTotalPnl" class="{{ 'positive' if total_unrealized_pnl >= 0 else 'negative' }}">{{ total_unrealized_pnl|currency }}</td>
+        <td colspan="6"><strong>Grand Total (Canonical)</strong></td>
+        <td id="grandTotalValue">{{ canonical_total_value|currency }}</td>
+        <td id="grandTotalPnl" class="{{ 'positive' if canonical_total_unrealized_pnl >= 0 else 'negative' }}">{{ canonical_total_unrealized_pnl|currency }}</td>
         <td></td>
       </tr>
     </tfoot>
@@ -174,7 +283,11 @@
     groupAllocationPercentages: {{ group_allocation_percentages|tojson }},
     assetAllocationLabels: {{ asset_allocation_labels|tojson }},
     assetAllocationValues: {{ asset_allocation_values|tojson }},
-    assetAllocationPercentages: {{ asset_allocation_percentages|tojson }}
+    assetAllocationPercentages: {{ asset_allocation_percentages|tojson }},
+    portfolioSeriesLabels: {{ portfolio_series_labels|tojson }},
+    portfolioSeriesValues: {{ portfolio_series_values|tojson }},
+    pnlSeriesLabels: {{ pnl_series_labels|tojson }},
+    pnlSeriesByAsset: {{ pnl_series_by_asset|tojson }}
   };
 </script>
 {% endblock %}
