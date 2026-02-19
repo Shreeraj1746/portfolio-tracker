@@ -86,6 +86,15 @@ Test suite covers:
 - basket CRUD and basket overlay behavior
 - chart/series regressions around portfolio, asset, and basket views
 
+## Maintenance
+Permanently remove archived assets (and dependent rows) from the database:
+
+```bash
+python3 manage.py purge-archived-assets
+# optional: only purge archived assets created at least 30 days ago
+python3 manage.py purge-archived-assets --older-than-days 30
+```
+
 ## Project Layout
 ```text
 app/

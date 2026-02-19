@@ -218,12 +218,22 @@ function initTxForm() {
   const quantityField = form.querySelector('[data-field="quantity"]');
   const priceField = form.querySelector('[data-field="price"]');
   const manualField = form.querySelector('[data-field="manual_value"]');
+  const manualInvestedOverrideField = form.querySelector('[data-field="manual_invested_override"]');
+  const quantityInput = form.querySelector('input[name="quantity"]');
+  const priceInput = form.querySelector('input[name="price"]');
+  const manualValueInput = form.querySelector('input[name="manual_value"]');
 
   const update = () => {
     const isManualUpdate = txType.value === "MANUAL_VALUE_UPDATE";
     if (quantityField) quantityField.classList.toggle("hidden", isManualUpdate);
     if (priceField) priceField.classList.toggle("hidden", isManualUpdate);
     if (manualField) manualField.classList.toggle("hidden", !isManualUpdate);
+    if (manualInvestedOverrideField) {
+      manualInvestedOverrideField.classList.toggle("hidden", !isManualUpdate);
+    }
+    if (quantityInput) quantityInput.required = !isManualUpdate;
+    if (priceInput) priceInput.required = !isManualUpdate;
+    if (manualValueInput) manualValueInput.required = isManualUpdate;
   };
 
   txType.addEventListener("change", update);

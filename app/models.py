@@ -135,6 +135,7 @@ class Transaction(Base):
     price: Mapped[float | None] = mapped_column(Float, nullable=True)
     fees: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
     manual_value: Mapped[float | None] = mapped_column(Float, nullable=True)
+    invested_override: Mapped[float | None] = mapped_column(Float, nullable=True)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     portfolio: Mapped[Portfolio] = relationship(back_populates="transactions")

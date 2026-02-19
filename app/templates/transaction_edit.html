@@ -33,6 +33,10 @@
       Manual value
       <input type="number" step="0.01" name="manual_value" value="{{ transaction.manual_value if transaction.manual_value is not none else '' }}" />
     </label>
+    <label data-field="manual_invested_override">
+      Invested override (optional)
+      <input type="number" step="0.01" name="manual_invested_override" value="{{ transaction.invested_override if transaction.invested_override is not none else '' }}" />
+    </label>
     <label class="full-width">
       Note
       <input type="text" name="note" value="{{ transaction.note or '' }}" />

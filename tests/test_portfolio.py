@@ -9,6 +9,7 @@ from app.models import TransactionType
 from app.services.portfolio import (
     InvalidTransaction,
     compute_allocation_percentages,
+    compute_manual_position,
     compute_market_position,
     sort_transactions,
 )
@@ -17,9 +18,11 @@ from app.services.portfolio import (
 def make_tx(
     tx_id: int,
     tx_type: TransactionType,
-    quantity: float,
-    price: float,
+    quantity: float = 0.0,
+    price: float = 0.0,
     fees: float = 0.0,
+    manual_value: float | None = None,
+    invested_override: float | None = None,
 ):
     return SimpleNamespace(
         id=tx_id,
@@ -28,7 +31,8 @@ def make_tx(
         quantity=quantity,
         price=price,
         fees=fees,
-        manual_value=None,
+        manual_value=manual_value,
+        invested_override=invested_override,
     )
 
 
@@ -104,3 +108,34 @@ def test_market_position_allows_negative_buy_price_for_adjusted_basis() -> None:
     state = compute_market_position(txs)
     assert state.quantity == pytest.approx(1.0)
     assert state.avg_cost == pytest.approx(-250.0)
+
+
+def test_manual_position_supports_sell_and_reduces_invested_cost_basis() -> None:
+    txs = [
+        make_tx(1, TransactionType.BUY, quantity=100_000, price=1.0),
+        make_tx(2, TransactionType.MANUAL_VALUE_UPDATE, manual_value=100_000.0),
+        make_tx(3, TransactionType.SELL, quantity=20_000, price=20_000),
+        make_tx(4, TransactionType.MANUAL_VALUE_UPDATE, manual_value=80_000.0),
+    ]
+
+    state = compute_manual_position(txs)
+    assert state.invested_total == pytest.approx(80_000.0)
+    assert state.current_value == pytest.approx(80_000.0)
+    assert state.unrealized_pnl == pytest.approx(0.0)
+
+
+def test_manual_value_update_can_override_invested_basis() -> None:
+    txs = [
+        make_tx(1, TransactionType.BUY, quantity=1, price=166_054.0),
+        make_tx(
+            2,
+            TransactionType.MANUAL_VALUE_UPDATE,
+            manual_value=162_811.0,
+            invested_override=162_811.0,
+        ),
+    ]
+
+    state = compute_manual_position(txs)
+    assert state.invested_total == pytest.approx(162_811.0)
+    assert state.current_value == pytest.approx(162_811.0)
+    assert state.unrealized_pnl == pytest.approx(0.0)

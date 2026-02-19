@@ -172,6 +172,13 @@ def _tx_manual_value(value: Transaction | object) -> float:
     return float(getattr(value, "manual_value") or 0.0)
 
 
+def _tx_invested_override(value: Transaction | object) -> float | None:
+    raw = getattr(value, "invested_override", None)
+    if raw is None:
+        return None
+    return float(raw)
+
+
 def sort_transactions(
     transactions: Iterable[Transaction | object],
 ) -> list[Transaction | object]:
@@ -225,7 +232,9 @@ def compute_market_position(
 def compute_manual_position(
     transactions: Iterable[Transaction | object],
 ) -> ManualPosition:
-    """Compute manual-asset value using manual updates plus optional invested BUY cost."""
+    """Compute manual-asset value with optional invested override snapshots."""
+    held_quantity = 0.0
+    avg_cost = 0.0
     invested_total = 0.0
     latest_value: float | None = None
     latest_value_at: datetime | None = None
@@ -243,15 +252,50 @@ def compute_manual_position(
                 raise InvalidTransaction("Manual BUY price cannot be negative")
             if fees < 0:
                 raise InvalidTransaction("Fees cannot be negative")
-            invested_total += (quantity * price) + fees
+            cost_total = invested_total + (quantity * price) + fees
+            held_quantity += quantity
+            invested_total = cost_total
+            avg_cost = invested_total / held_quantity if held_quantity > 0 else 0.0
         elif tx_type == TransactionType.SELL.value:
-            raise InvalidTransaction("Manual assets do not support SELL transactions")
+            quantity_to_sell = _tx_quantity(tx)
+            price = _tx_price(tx)
+            fees = _tx_fees(tx)
+            if quantity_to_sell <= 0:
+                raise InvalidTransaction("Manual SELL quantity must be positive")
+            if price < 0:
+                raise InvalidTransaction("Manual SELL price cannot be negative")
+            if fees < 0:
+                raise InvalidTransaction("Fees cannot be negative")
+            if quantity_to_sell - held_quantity > 1e-9:
+                raise InvalidTransaction(
+                    "Cannot sell more than currently held manual quantity"
+                )
+
+            invested_total -= avg_cost * quantity_to_sell
+            held_quantity -= quantity_to_sell
+            if held_quantity <= 1e-9:
+                held_quantity = 0.0
+                avg_cost = 0.0
+                invested_total = 0.0
+            else:
+                avg_cost = invested_total / held_quantity
         elif tx_type == TransactionType.MANUAL_VALUE_UPDATE.value:
             value = _tx_manual_value(tx)
             if value < 0:
                 raise InvalidTransaction("Manual value cannot be negative")
             latest_value = value
             latest_value_at = _tx_timestamp(tx)
+
+            invested_override = _tx_invested_override(tx)
+            if invested_override is not None:
+                if invested_override < 0:
+                    raise InvalidTransaction(
+                        "Manual invested override cannot be negative"
+                    )
+                invested_total = invested_override
+                # Invested override is treated as a direct basis reset.
+                held_quantity = invested_override
+                avg_cost = 1.0 if held_quantity > 0 else 0.0
         else:
             raise InvalidTransaction(f"Unsupported transaction type: {tx_type}")
 

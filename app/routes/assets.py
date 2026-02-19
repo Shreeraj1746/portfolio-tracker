@@ -68,7 +68,7 @@ def _tx_count(db: Session, asset_id: int) -> int:
 def _allowed_tx_types(asset_type: AssetType) -> list[TransactionType]:
     if asset_type == AssetType.MARKET:
         return [TransactionType.BUY, TransactionType.SELL]
-    return [TransactionType.BUY, TransactionType.MANUAL_VALUE_UPDATE]
+    return [TransactionType.BUY, TransactionType.SELL, TransactionType.MANUAL_VALUE_UPDATE]
 
 
 @router.get("/{asset_id}")
@@ -314,6 +314,7 @@ async def add_transaction(
         quantity = None
         price = None
         manual_value = None
+        invested_override = None
 
         if tx_enum in {TransactionType.BUY, TransactionType.SELL}:
             quantity = _parse_float(
@@ -336,6 +337,15 @@ async def add_transaction(
             manual_value = _parse_float(
                 str(form.get("manual_value", "")), "Manual value", allow_zero=True
             )
+            raw_invested_override = str(
+                form.get("manual_invested_override", "")
+            ).strip()
+            if raw_invested_override:
+                invested_override = _parse_float(
+                    raw_invested_override,
+                    "Manual invested override",
+                    allow_zero=True,
+                )
 
         candidate = SimpleNamespace(
             id=10**9,
@@ -345,6 +355,7 @@ async def add_transaction(
             price=price,
             fees=fees,
             manual_value=manual_value,
+            invested_override=invested_override,
         )
 
         existing = list(
@@ -369,6 +380,7 @@ async def add_transaction(
         price=price,
         fees=fees,
         manual_value=manual_value,
+        invested_override=invested_override,
         note=note,
     )
     db.add(tx)
@@ -441,6 +453,7 @@ async def edit_transaction(
         quantity = None
         price = None
         manual_value = None
+        invested_override = None
 
         if tx_enum in {TransactionType.BUY, TransactionType.SELL}:
             quantity = _parse_float(
@@ -463,6 +476,15 @@ async def edit_transaction(
             manual_value = _parse_float(
                 str(form.get("manual_value", "")), "Manual value", allow_zero=True
             )
+            raw_invested_override = str(
+                form.get("manual_invested_override", "")
+            ).strip()
+            if raw_invested_override:
+                invested_override = _parse_float(
+                    raw_invested_override,
+                    "Manual invested override",
+                    allow_zero=True,
+                )
 
         candidate = SimpleNamespace(
             id=tx.id,
@@ -472,6 +494,7 @@ async def edit_transaction(
             price=price,
             fees=fees,
             manual_value=manual_value,
+            invested_override=invested_override,
         )
 
         existing = list(
@@ -498,6 +521,7 @@ async def edit_transaction(
     tx.quantity = quantity
     tx.price = price
     tx.manual_value = manual_value
+    tx.invested_override = invested_override
     tx.fees = fees
     tx.note = note
     db.commit()

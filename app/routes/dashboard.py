@@ -331,10 +331,10 @@ async def create_asset(request: Request, db: Session = Depends(get_db)):
                         asset_id=asset.id,
                         type=TransactionType.BUY,
                         timestamp=created_at,
-                        quantity=1.0,
-                        price=initial_invested,
+                        quantity=initial_invested,
+                        price=1.0,
                         fees=0.0,
-                        note="Initial invested amount",
+                        note="Initial invested amount at unit cost 1",
                     )
                 )
     except ValueError as exc:

@@ -483,6 +483,99 @@ def test_add_transaction_accepts_mixed_naive_and_aware_timestamps(
         assert len(txs) == 2
 
 
+def test_manual_asset_transactions_support_sell_and_invested_override(
+    authed_client,
+    csrf_token_for,
+    db_session_factory,
+    app,
+):
+    with db_session_factory() as db:
+        portfolio = ensure_default_portfolio(db)
+        group = _seed_group(db, portfolio.id, "cash")
+        asset = _make_manual_asset(portfolio.id, group.id, "USD", "US Dollar")
+        db.add(asset)
+        db.flush()
+        db.add(
+            Transaction(
+                portfolio_id=portfolio.id,
+                asset_id=asset.id,
+                type=TransactionType.BUY,
+                timestamp=datetime(2026, 2, 15, 13, 0, tzinfo=timezone.utc),
+                quantity=100000.0,
+                price=1.0,
+                fees=0.0,
+                note="Initial cash basis",
+            )
+        )
+        db.add(
+            Transaction(
+                portfolio_id=portfolio.id,
+                asset_id=asset.id,
+                type=TransactionType.MANUAL_VALUE_UPDATE,
+                timestamp=datetime(2026, 2, 15, 13, 1, tzinfo=timezone.utc),
+                manual_value=100000.0,
+                note="Initial value",
+            )
+        )
+        db.commit()
+        asset_id = asset.id
+
+    token = csrf_token_for(f"/assets/{asset_id}")
+    response = authed_client.post(
+        f"/assets/{asset_id}/transactions",
+        data={
+            "csrf_token": token,
+            "type": "SELL",
+            "timestamp": "2026-02-16T13:00",
+            "quantity": "20000",
+            "price": "20000",
+            "fees": "0",
+            "note": "Sold cash position",
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code in (302, 303)
+
+    token = csrf_token_for(f"/assets/{asset_id}")
+    response = authed_client.post(
+        f"/assets/{asset_id}/transactions",
+        data={
+            "csrf_token": token,
+            "type": "MANUAL_VALUE_UPDATE",
+            "timestamp": "2026-02-16T13:01",
+            "manual_value": "80000",
+            "manual_invested_override": "80000",
+            "fees": "0",
+            "note": "Sync invested to current value",
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code in (302, 303)
+
+    with db_session_factory() as db:
+        txs = list(
+            db.scalars(
+                select(Transaction)
+                .where(Transaction.asset_id == asset_id)
+                .order_by(Transaction.timestamp.asc(), Transaction.id.asc())
+            )
+        )
+        assert [tx.type for tx in txs] == [
+            TransactionType.BUY,
+            TransactionType.MANUAL_VALUE_UPDATE,
+            TransactionType.SELL,
+            TransactionType.MANUAL_VALUE_UPDATE,
+        ]
+        assert txs[-1].invested_override == pytest.approx(80000.0)
+
+        portfolio = ensure_default_portfolio(db)
+        snapshot = build_dashboard_snapshot(db, app.state.pricing_service, portfolio.id)
+        rows = {row.symbol: row for row in snapshot.positions}
+        assert rows["USD"].avg_cost == pytest.approx(80000.0)
+        assert rows["USD"].current_value == pytest.approx(80000.0)
+        assert rows["USD"].unrealized_pnl == pytest.approx(0.0)
+
+
 def test_asset_edit_delete_rules(
     authed_client,
     csrf_token_for,
