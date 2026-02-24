@@ -60,6 +60,8 @@ Tables are created automatically by startup/management flow if they do not alrea
 - `QUOTE_TTL_SECONDS` (default: `60`)
 - `SESSION_COOKIE_NAME` (default: `portfolio_session`)
 - `SESSION_HTTPS_ONLY` (default: `false`)
+- `SQLITE_BUSY_TIMEOUT_MS` (default: `30000`)
+- `SQLITE_JOURNAL_MODE` (default: `WAL`)
 
 ## Quote Behavior
 - Default provider is `yfinance`.

@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import RedirectResponse
 from sqlalchemy import select
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, selectinload
 
 from app.db import get_db
@@ -22,6 +23,14 @@ from app.services.portfolio import (
 from app.web import flash, form_with_csrf, get_user_from_session, render_template
 
 router = APIRouter(prefix="/assets", tags=["assets"])
+
+
+def _commit_quote_cache_updates(db: Session) -> None:
+    """Best-effort commit for quote cache writes on read-only endpoints."""
+    try:
+        db.commit()
+    except OperationalError:
+        db.rollback()
 
 
 def _parse_datetime_local(value: str) -> datetime:
@@ -105,7 +114,7 @@ def asset_detail(asset_id: int, request: Request, db: Session = Depends(get_db))
     tx_types = _allowed_tx_types(asset.asset_type)
     tx_count = len(transactions)
 
-    db.commit()
+    _commit_quote_cache_updates(db)
 
     return render_template(
         request,

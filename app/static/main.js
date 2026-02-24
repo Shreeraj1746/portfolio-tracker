@@ -5,6 +5,7 @@ const usdFmt = new Intl.NumberFormat("en-US", {
 });
 
 const charts = {};
+let quotesPollInFlight = false;
 
 function destroyChart(key) {
   const existing = charts[key];
@@ -459,8 +460,10 @@ function updateDashboardTable() {
 async function pollQuotes() {
   const cfg = window.PORTFOLIO_DASHBOARD;
   if (!cfg || !Array.isArray(cfg.symbols) || cfg.symbols.length === 0) return;
+  if (quotesPollInFlight) return;
 
   const url = `/api/quotes?symbols=${encodeURIComponent(cfg.symbols.join(","))}`;
+  quotesPollInFlight = true;
   try {
     const response = await fetch(url, { credentials: "same-origin" });
     if (!response.ok) return;
@@ -507,6 +510,8 @@ async function pollQuotes() {
     updateDashboardTable();
   } catch (_error) {
     // Best effort refresh only.
+  } finally {
+    quotesPollInFlight = false;
   }
 }
 

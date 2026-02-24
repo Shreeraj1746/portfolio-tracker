@@ -6,7 +6,8 @@ from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import select
-from sqlalchemy.orm import selectinload
+from sqlalchemy.exc import OperationalError
+from sqlalchemy.orm import Session, selectinload
 
 from app.models import Asset, AssetType, Basket, BasketAsset, Group, Transaction, TransactionType
 from app.services.portfolio import (
@@ -47,6 +48,58 @@ def _seed_group(db, portfolio_id: int, name: str) -> Group:
     db.add(group)
     db.flush()
     return group
+
+
+def _raise_locked_commit(_self) -> None:
+    raise OperationalError("COMMIT", {}, RuntimeError("database is locked"))
+
+
+def test_dashboard_get_survives_quote_cache_commit_lock(authed_client, monkeypatch):
+    monkeypatch.setattr(Session, "commit", _raise_locked_commit)
+    response = authed_client.get("/")
+    assert response.status_code == 200
+
+
+def test_asset_detail_get_survives_quote_cache_commit_lock(
+    authed_client,
+    db_session_factory,
+    monkeypatch,
+):
+    with db_session_factory() as db:
+        portfolio = ensure_default_portfolio(db)
+        group = _seed_group(db, portfolio.id, "lock-asset")
+        asset = _make_market_asset(portfolio.id, group.id, "LOCKA", "Lock Asset")
+        db.add(asset)
+        db.commit()
+        asset_id = asset.id
+
+    monkeypatch.setattr(Session, "commit", _raise_locked_commit)
+    response = authed_client.get(f"/assets/{asset_id}")
+    assert response.status_code == 200
+
+
+def test_basket_detail_get_survives_quote_cache_commit_lock(
+    authed_client,
+    db_session_factory,
+    monkeypatch,
+):
+    with db_session_factory() as db:
+        portfolio = ensure_default_portfolio(db)
+        group = _seed_group(db, portfolio.id, "lock-basket")
+        asset = _make_market_asset(portfolio.id, group.id, "LOCKB", "Lock Basket Asset")
+        db.add(asset)
+        db.flush()
+
+        basket = Basket(portfolio_id=portfolio.id, name="lock basket")
+        db.add(basket)
+        db.flush()
+        db.add(BasketAsset(basket_id=basket.id, asset_id=asset.id, weight=None))
+        db.commit()
+        basket_id = basket.id
+
+    monkeypatch.setattr(Session, "commit", _raise_locked_commit)
+    response = authed_client.get(f"/baskets/{basket_id}")
+    assert response.status_code == 200
 
 
 def test_basket_crud(authed_client, csrf_token_for, db_session_factory):

@@ -374,6 +374,8 @@ Environment variables (`app/config.py`):
 - `QUOTE_TTL_SECONDS`
 - `SESSION_COOKIE_NAME`
 - `SESSION_HTTPS_ONLY`
+- `SQLITE_BUSY_TIMEOUT_MS`
+- `SQLITE_JOURNAL_MODE`
 
 Default deployment assumptions:
 - Single process and single SQLite instance.

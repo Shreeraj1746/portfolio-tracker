@@ -5,6 +5,7 @@ from datetime import date, datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from sqlalchemy import select
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from app.db import get_db
@@ -22,6 +23,14 @@ from app.services.portfolio import (
 from app.web import flash, form_with_csrf, get_user_from_session, render_template
 
 router = APIRouter()
+
+
+def _commit_quote_cache_updates(db: Session) -> None:
+    """Best-effort commit for quote cache writes on read-only endpoints."""
+    try:
+        db.commit()
+    except OperationalError:
+        db.rollback()
 
 
 def _parse_float(
@@ -107,7 +116,7 @@ def dashboard_page(request: Request, db: Session = Depends(get_db)):
         portfolio_series = None
         pnl_overlay = None
 
-    db.commit()
+    _commit_quote_cache_updates(db)
 
     canonical_groups_for_table: dict[str, list] = {}
     for row in snapshot.canonical_positions:
@@ -387,5 +396,5 @@ def api_quotes(
                 "warning": quote.warning,
             }
 
-    db.commit()
+    _commit_quote_cache_updates(db)
     return {"quotes": data}

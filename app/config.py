@@ -16,6 +16,8 @@ class Settings:
     session_https_only: bool = (
         os.getenv("SESSION_HTTPS_ONLY", "false").lower() == "true"
     )
+    sqlite_busy_timeout_ms: int = int(os.getenv("SQLITE_BUSY_TIMEOUT_MS", "30000"))
+    sqlite_journal_mode: str = os.getenv("SQLITE_JOURNAL_MODE", "WAL")
 
 
 settings = Settings()

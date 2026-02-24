@@ -5,6 +5,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Protocol
 
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.models import QuoteCache
@@ -113,17 +114,34 @@ class PricingService:
         now = datetime.now(timezone.utc)
 
         cached = db.scalar(select(QuoteCache).where(QuoteCache.symbol == clean_symbol))
+        cached_fallback: QuoteResult | None = None
         if cached:
-            age_seconds = (now - self._as_utc(cached.fetched_at)).total_seconds()
+            cached_fetched_at = self._as_utc(cached.fetched_at)
+            cached_fallback = QuoteResult(
+                symbol=clean_symbol,
+                price=float(cached.price),
+                fetched_at=cached_fetched_at,
+                stale=True,
+            )
+            age_seconds = (now - cached_fetched_at).total_seconds()
             if age_seconds <= self.ttl_seconds:
                 return QuoteResult(
                     symbol=clean_symbol,
-                    price=float(cached.price),
-                    fetched_at=self._as_utc(cached.fetched_at),
+                    price=cached_fallback.price,
+                    fetched_at=cached_fallback.fetched_at,
                 )
 
         try:
             fresh = self.provider.get_latest_quote(provider_symbol)
+        except Exception as exc:
+            if cached_fallback is not None:
+                cached_fallback.warning = (
+                    f"Using cached quote due to provider issue: {exc}"
+                )
+                return cached_fallback
+            return None
+
+        try:
             if cached is None:
                 cached = QuoteCache(
                     symbol=clean_symbol,
@@ -135,21 +153,20 @@ class PricingService:
                 cached.price = fresh.price
                 cached.fetched_at = self._as_utc(fresh.fetched_at)
             db.flush()
-            return QuoteResult(
-                symbol=clean_symbol,
-                price=fresh.price,
-                fetched_at=self._as_utc(fresh.fetched_at),
-            )
-        except Exception as exc:
-            if cached is not None:
-                return QuoteResult(
-                    symbol=clean_symbol,
-                    price=float(cached.price),
-                    fetched_at=self._as_utc(cached.fetched_at),
-                    stale=True,
-                    warning=f"Using cached quote due to provider issue: {exc}",
+        except SQLAlchemyError as exc:
+            db.rollback()
+            if cached_fallback is not None:
+                cached_fallback.warning = (
+                    f"Using cached quote due to cache write issue: {exc}"
                 )
+                return cached_fallback
             return None
+
+        return QuoteResult(
+            symbol=clean_symbol,
+            price=fresh.price,
+            fetched_at=self._as_utc(fresh.fetched_at),
+        )
 
     def get_historical_daily(
         self, symbol: str, start: date, end: date
